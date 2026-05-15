@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { AlertTriangle, Clock, MapPin, Radio } from "lucide-react";
+import { Clock, MapPin, Radio } from "lucide-react";
 
 // Dynamically import Map with SSR disabled since Leaflet relies on window
 const LiveMap = dynamic(() => import("@/components/Map"), {
