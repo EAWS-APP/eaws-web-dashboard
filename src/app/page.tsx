@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Flame, Radio, Shield, ShieldAlert, UserCog } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 const PORTALS = [
   {
@@ -14,7 +15,7 @@ const PORTALS = [
     buttonColor: "bg-red-600 hover:bg-red-700",
     ringColor: "focus:ring-red-500",
     textColor: "text-red-500 hover:text-red-400",
-    account: { identifier: "DISP-4920", password: "Dispatch@2026" },
+    account: { identifier: "DISP-4920", email: "dispatcher@eaws.gov.gh", password: "Dispatch@2026" },
     dashboardPath: "/dashboard",
   },
   {
@@ -26,7 +27,7 @@ const PORTALS = [
     buttonColor: "bg-blue-600 hover:bg-blue-700",
     ringColor: "focus:ring-blue-500",
     textColor: "text-blue-500 hover:text-blue-400",
-    account: { identifier: "POL-0021", password: "Police@2026" },
+    account: { identifier: "POL-0021", email: "police@eaws.gov.gh", password: "Police@2026" },
     dashboardPath: "/police",
   },
   {
@@ -38,7 +39,7 @@ const PORTALS = [
     buttonColor: "bg-orange-600 hover:bg-orange-700",
     ringColor: "focus:ring-orange-500",
     textColor: "text-orange-500 hover:text-orange-400",
-    account: { identifier: "FIRE-119", password: "Fire@2026" },
+    account: { identifier: "FIRE-119", email: "fire@eaws.gov.gh", password: "Fire@2026" },
     dashboardPath: "/fire",
   },
   {
@@ -50,7 +51,7 @@ const PORTALS = [
     buttonColor: "bg-purple-600 hover:bg-purple-700",
     ringColor: "focus:ring-purple-500",
     textColor: "text-purple-500 hover:text-purple-400",
-    account: { identifier: "admin@eaws.gov.gh", password: "Admin@2026" },
+    account: { identifier: "admin@eaws.gov.gh", email: "admin@eaws.gov.gh", password: "Admin@2026" },
     dashboardPath: "/admin",
   },
 ];
@@ -63,6 +64,7 @@ export default function LoginPage() {
     password: PORTALS[0].account.password,
   });
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   function selectPortal(portal: (typeof PORTALS)[number]) {
     setActivePortal(portal);
@@ -73,16 +75,28 @@ export default function LoginPage() {
     setError("");
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setIsSubmitting(true);
+    setError("");
 
     const expected = activePortal.account;
-    const isAuthorized =
-      credentials.identifier.trim().toLowerCase() === expected.identifier.toLowerCase() &&
-      credentials.password === expected.password;
 
-    if (!isAuthorized) {
-      setError(`Use the created ${activePortal.name.toLowerCase()} account credentials shown below.`);
+    if (credentials.identifier.trim().toLowerCase() !== expected.identifier.toLowerCase()) {
+      setError(`Use the created ${activePortal.name.toLowerCase()} account ID shown below.`);
+      setIsSubmitting(false);
+      return;
+    }
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: expected.email,
+      password: credentials.password,
+    });
+
+    setIsSubmitting(false);
+
+    if (signInError) {
+      setError(signInError.message);
       return;
     }
 
@@ -158,6 +172,10 @@ export default function LoginPage() {
                 <span className="font-mono text-neutral-100">{activePortal.account.identifier}</span>
               </p>
               <p className="flex items-center justify-between gap-3">
+                <span>Auth email</span>
+                <span className="font-mono text-neutral-100">{activePortal.account.email}</span>
+              </p>
+              <p className="flex items-center justify-between gap-3">
                 <span>Passcode</span>
                 <span className="font-mono text-neutral-100">{activePortal.account.password}</span>
               </p>
@@ -210,9 +228,10 @@ export default function LoginPage() {
 
             <button
               type="submit"
+              disabled={isSubmitting}
               className={`w-full group flex items-center justify-center gap-2 ${activePortal.buttonColor} text-white font-semibold py-3.5 px-4 rounded-lg transition-all active:scale-[0.98]`}
             >
-              <span>Authorize & Connect</span>
+              <span>{isSubmitting ? "Authorizing..." : "Authorize & Connect"}</span>
               <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </form>

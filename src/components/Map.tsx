@@ -3,6 +3,7 @@
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import type { AgencyUnit, Incident } from "@/lib/models";
 
 // Fix for default marker icons in Leaflet with Next.js
 const customIcon = new L.Icon({
@@ -29,9 +30,11 @@ const emergencyIcon = new L.DivIcon({
 interface MapProps {
   center?: [number, number];
   zoom?: number;
+  incidents?: Incident[];
+  units?: AgencyUnit[];
 }
 
-export default function Map({ center = [5.6037, -0.1870], zoom = 12 }: MapProps) {
+export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents = [], units = [] }: MapProps) {
   // Center is Accra, Ghana by default
   
   return (
@@ -47,29 +50,33 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12 }: MapProps)
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
         
-        {/* Sample Emergency SOS Marker */}
-        <Marker position={[5.6037, -0.1870]} icon={emergencyIcon}>
-          <Popup className="emergency-popup">
-            <div className="p-1">
-              <h3 className="font-bold text-red-600 mb-1">SOS Alert: Medical Emergency</h3>
-              <p className="text-sm text-gray-700">Accra Mall Area</p>
-              <p className="text-xs text-gray-500 mt-1">Reported 2 mins ago</p>
-              <button className="mt-2 w-full bg-red-600 text-white py-1 rounded text-sm font-medium hover:bg-red-700 transition">
-                Dispatch Ambulance
-              </button>
-            </div>
-          </Popup>
-        </Marker>
+        {incidents.map((incident) => (
+          <Marker key={incident.id} position={[incident.latitude, incident.longitude]} icon={emergencyIcon}>
+            <Popup className="emergency-popup">
+              <div className="p-1">
+                <h3 className="font-bold text-red-600 mb-1">{incident.title}</h3>
+                <p className="text-sm text-gray-700">{incident.location_name}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {incident.category} · {incident.severity}
+                </p>
+                <button className="mt-2 w-full bg-red-600 text-white py-1 rounded text-sm font-medium hover:bg-red-700 transition">
+                  Dispatch Action
+                </button>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
 
-        {/* Sample Available Unit Marker */}
-        <Marker position={[5.5900, -0.1700]} icon={customIcon}>
-          <Popup>
-            <div className="p-1">
-              <h3 className="font-bold text-blue-600 mb-1">Police Patrol Unit 4</h3>
-              <p className="text-sm text-gray-700">Available</p>
-            </div>
-          </Popup>
-        </Marker>
+        {units.map((unit) => (
+          <Marker key={unit.id} position={[unit.latitude, unit.longitude]} icon={customIcon}>
+            <Popup>
+              <div className="p-1">
+                <h3 className="font-bold text-blue-600 mb-1">{unit.name}</h3>
+                <p className="text-sm text-gray-700">{unit.status}</p>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
       </MapContainer>
     </div>
   );
