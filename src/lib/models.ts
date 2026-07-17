@@ -1,5 +1,5 @@
 export type IncidentSeverity = "PENDING TRIAGE" | "CRITICAL" | "WARNING" | "MEDIUM" | "LOW";
-export type IncidentStatus = "pending" | "verified" | "assigned" | "in_progress" | "resolved";
+export type IncidentStatus = "pending" | "verified" | "assigned" | "in_progress" | "resolved" | "escalated";
 
 export type Incident = {
   id: string;
@@ -20,8 +20,20 @@ export type Incident = {
   likes_count: number;
   comments_count: number;
   views_count?: number;
+  metadata?: any;
   created_at: string;
   updated_at?: string;
+  incident_media?: Array<{
+    id: string;
+    media_type: "image" | "video" | "audio";
+    file_url: string;
+    storage_path?: string;
+  }> | null;
+  reporter_profile?: {
+    full_name: string;
+    user_role: string;
+    operator_code?: string;
+  } | null;
 };
 
 export type AgencyUnit = {
@@ -42,5 +54,9 @@ export type Assignment = {
   priority: string;
   status: string;
   created_at: string;
+  incident_description?: string;
+  incident_metadata?: any;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 

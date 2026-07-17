@@ -6,7 +6,7 @@ import PortalDashboard from "@/components/PortalDashboard";
 import { eawsApi } from "@/lib/api";
 import type { Assignment } from "@/lib/models";
 
-export default function PoliceDashboardPage() {
+export default function AmbulanceDashboardPage() {
   const router = useRouter();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -20,15 +20,15 @@ export default function PoliceDashboardPage() {
     async function checkAuth() {
       try {
         const data = await eawsApi.getMe();
-        if (data.profile && ["police", "admin", "super_admin"].includes(data.profile.user_role)) {
+        if (data.profile && ["ambulance", "admin", "super_admin"].includes(data.profile.user_role)) {
           setUserProfile(data.profile);
           setIsAuthenticated(true);
         } else {
-          console.warn("Mismatched role or unauthorized access to police dashboard");
+          console.warn("Mismatched role or unauthorized access to ambulance dashboard");
           router.replace("/");
         }
       } catch (err) {
-        console.error("Session verification failed for police portal:", err);
+        console.error("Session verification failed for ambulance portal:", err);
         router.replace("/");
       }
     }
@@ -37,11 +37,11 @@ export default function PoliceDashboardPage() {
 
   async function loadAssignments() {
     try {
-      const data = await eawsApi.getAssignments("police");
+      const data = await eawsApi.getAssignments("ambulance");
       setAssignments(data || []);
       setError(null);
     } catch (err: any) {
-      console.error("Failed to load police assignments:", err);
+      console.error("Failed to load ambulance assignments:", err);
       setError("Failed to connect to backend feed");
     }
   }
@@ -49,7 +49,7 @@ export default function PoliceDashboardPage() {
   // Poll assignments only after successful auth
   useEffect(() => {
     if (!isAuthenticated) return;
-    
+
     loadAssignments();
     const interval = setInterval(loadAssignments, 5000);
     return () => clearInterval(interval);
@@ -63,12 +63,12 @@ export default function PoliceDashboardPage() {
       } else if (action === "Request backup") {
         await eawsApi.updateAssignmentStatus(id, {
           status: "en_route",
-          remarks: "Officer requested backup support units.",
+          remarks: "Medical crew requested backup/advanced life support.",
         });
-      } else if (action === "Mark scene secured") {
+      } else if (action === "Mark resolved") {
         await eawsApi.updateAssignmentStatus(id, {
           status: "resolved",
-          remarks: "Scene secured and resolved by responding officers.",
+          remarks: "Patient stabilized, transported, and assignment completed.",
         });
       }
       setSelectedId(undefined);
@@ -114,24 +114,24 @@ export default function PoliceDashboardPage() {
 
   return (
     <PortalDashboard
-      tone="blue"
-      portal="Police"
-      subtitle="Police response coordination"
-      operator={userProfile ? `${userProfile.full_name} (${userProfile.operator_code || "POL-PATROL"})` : "Police Patrol Unit"}
-      badge="Law enforcement portal"
+      tone="red"
+      portal="Ambulance"
+      subtitle="Emergency medical response coordination"
+      operator={userProfile ? `${userProfile.full_name} (${userProfile.operator_code || "AMB-CREW"})` : "Ambulance Crew Unit"}
+      badge="Medical response portal"
       stats={[
-        { label: "Active patrols", value: "18", detail: "Units available across Accra metro" },
+        { label: "Active units", value: "8", detail: "Ambulance crews on shift" },
         { label: "Open assignments", value: String(openCasesCount), detail: error || "Real-time dispatch connection active" },
-        { label: "Avg. arrival", value: "8m", detail: "Current urban response estimate" },
+        { label: "Avg. triage to dispatch", value: "4.5m", detail: "Average response dispatch time" },
       ]}
-      queueTitle="Police Assignments"
+      queueTitle="Ambulance Assignments"
       queue={queue}
-      actions={["Acknowledge assignment", "Request backup", "Mark scene secured"]}
+      actions={["Acknowledge assignment", "Request backup", "Mark resolved"]}
       selectedId={selectedId}
       onSelect={setSelectedId}
       onAction={handleAction}
       isActionLoading={isLoading}
-      userRole="police"
+      userRole="ambulance"
       userProfile={userProfile}
       onRefresh={loadAssignments}
     />

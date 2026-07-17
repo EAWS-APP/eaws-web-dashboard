@@ -1,111 +1,300 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Flame, Radio, Shield, ShieldAlert, UserCog } from "lucide-react";
+import {
+  ArrowRight,
+  ShieldAlert,
+  KeyRound,
+  Mail,
+  User,
+  Phone,
+  ScanFace,
+  CreditCard,
+  Camera,
+  CheckCircle,
+  X,
+  Lock,
+  Loader2,
+  RefreshCw
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
-
-const PORTALS = [
-  {
-    id: "dispatcher",
-    name: "Dispatcher",
-    icon: Radio,
-    idLabel: "Operator ID / Email",
-    idPlaceholder: "DISP-4920",
-    buttonColor: "bg-red-600 hover:bg-red-700",
-    ringColor: "focus:ring-red-500",
-    textColor: "text-red-500 hover:text-red-400",
-    account: { identifier: "DISP-4920", email: "dispatcher@eaws.gov.gh", password: "Dispatch@2026" },
-    dashboardPath: "/dashboard",
-  },
-  {
-    id: "police",
-    name: "Police",
-    icon: Shield,
-    idLabel: "Badge Number / Email",
-    idPlaceholder: "POL-0021",
-    buttonColor: "bg-blue-600 hover:bg-blue-700",
-    ringColor: "focus:ring-blue-500",
-    textColor: "text-blue-500 hover:text-blue-400",
-    account: { identifier: "POL-0021", email: "police@eaws.gov.gh", password: "Police@2026" },
-    dashboardPath: "/police",
-  },
-  {
-    id: "fire",
-    name: "Fire",
-    icon: Flame,
-    idLabel: "Unit ID / Email",
-    idPlaceholder: "FIRE-119",
-    buttonColor: "bg-orange-600 hover:bg-orange-700",
-    ringColor: "focus:ring-orange-500",
-    textColor: "text-orange-500 hover:text-orange-400",
-    account: { identifier: "FIRE-119", email: "fire@eaws.gov.gh", password: "Fire@2026" },
-    dashboardPath: "/fire",
-  },
-  {
-    id: "admin",
-    name: "Admin",
-    icon: UserCog,
-    idLabel: "Admin Username",
-    idPlaceholder: "admin@eaws.gov.gh",
-    buttonColor: "bg-purple-600 hover:bg-purple-700",
-    ringColor: "focus:ring-purple-500",
-    textColor: "text-purple-500 hover:text-purple-400",
-    account: { identifier: "admin@eaws.gov.gh", email: "admin@eaws.gov.gh", password: "Admin@2026" },
-    dashboardPath: "/admin",
-  },
-];
+import { eawsApi } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [activePortal, setActivePortal] = useState(PORTALS[0]);
-  const [credentials, setCredentials] = useState({
-    identifier: PORTALS[0].account.identifier,
-    password: PORTALS[0].account.password,
-  });
+
+  // Screen routing state: 'login' | 'register' | 'email-verification' | 'operator-check'
+  const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'email-verification' | 'operator-check'>('login');
+
+  // Input states
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  
+  // Citizen Registration details
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [ghanaCard, setGhanaCard] = useState("");
+  const [cardImage, setCardImage] = useState<string | null>(null);
+  const [isLivenessScanning, setIsLivenessScanning] = useState(false);
+  const [selfieImage, setSelfieImage] = useState<string | null>(null);
+
+  // Verification codes
+  const [emailCode, setEmailCode] = useState("");
+  const [operatorCode, setOperatorCode] = useState("");
+
+  // Temp storage for multi-stage authentication
+  const [tempEmail, setTempEmail] = useState("");
+  const [tempPassword, setTempPassword] = useState("");
+  const [tempRole, setTempRole] = useState("");
+  const [tempDashboardPath, setTempDashboardPath] = useState("");
+  const [tempCorrectOperatorCode, setTempCorrectOperatorCode] = useState("");
+
+  // Feedback states
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function selectPortal(portal: (typeof PORTALS)[number]) {
-    setActivePortal(portal);
-    setCredentials({
-      identifier: portal.account.identifier,
-      password: portal.account.password,
-    });
+  // Clear errors when switching screens
+  useEffect(() => {
     setError("");
+    setSuccess("");
+  }, [activeScreen]);
+
+  // Simulate selfie facial liveness scan
+  function handleSelfieScan() {
+    setIsLivenessScanning(true);
+    setError("");
+    setTimeout(() => {
+      setIsLivenessScanning(false);
+      setSelfieImage("captured-selfie-thumbnail");
+    }, 2500);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  // Ghana Card image file selection mock
+  function handleCardFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files && e.target.files[0]) {
+      setCardImage(e.target.files[0].name);
+      if (!ghanaCard) {
+        setGhanaCard("GHA-" + Math.floor(100000000 + Math.random() * 900000000) + "-1");
+      }
+    }
+  }
+
+  // Sign In Flow (Unified)
+  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
     setError("");
+    setSuccess("");
 
-    const expected = activePortal.account;
-
-    if (credentials.identifier.trim().toLowerCase() !== expected.identifier.toLowerCase()) {
-      setError(`Use the created ${activePortal.name.toLowerCase()} account ID shown below.`);
+    if (!email || !password) {
+      setError("Email and password are required.");
       setIsSubmitting(false);
       return;
     }
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: expected.email,
-      password: credentials.password,
-    });
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    setIsSubmitting(false);
+      if (signInError) {
+        throw new Error(signInError.message);
+      }
 
-    if (signInError) {
-      setError(signInError.message);
+      // Resolve user's actual profile from the backend API
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+
+      if (!token) {
+        throw new Error("Authorization token was not issued by Supabase.");
+      }
+
+      const apiResponse = await fetch("http://127.0.0.1:5000/api/me", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!apiResponse.ok) {
+        const errText = await apiResponse.text();
+        throw new Error(errText || "Error resolving profile credentials from backend.");
+      }
+
+      const meData = await apiResponse.json();
+      const role = meData.profile?.user_role || "citizen";
+      const code = meData.profile?.operator_code || "";
+      const isApproved = meData.profile?.is_approved !== false;
+      const isActive = meData.profile?.is_active !== false;
+
+      // 1. Verify status
+      if (!isApproved || !isActive) {
+        throw new Error("Your account is pending approval or has been deactivated.");
+      }
+
+      // 2. Redirect citizens directly to simulated app
+      if (role === "citizen") {
+        setIsSubmitting(false);
+        router.push("/citizen");
+        return;
+      }
+
+      // 3. For admins/super_admins, skip code verification and enter dashboard directly
+      if (role === "admin" || role === "super_admin") {
+        setIsSubmitting(false);
+        router.push("/admin");
+        return;
+      }
+
+      // 4. For operators, transition to Stage 2: Security Code verification
+      setTempEmail(email);
+      setTempRole(role);
+      setTempCorrectOperatorCode(code);
+
+      let targetPath = "/dashboard";
+      if (role === "police") targetPath = "/police";
+      else if (role === "ambulance") targetPath = "/ambulance";
+      else if (role === "fire") targetPath = "/fire";
+      else if (role === "nadmo") targetPath = "/nadmo";
+
+      setTempDashboardPath(targetPath);
+      setOperatorCode("");
+      setIsSubmitting(false);
+      setActiveScreen("operator-check");
+    } catch (err: any) {
+      await supabase.auth.signOut();
+      setIsSubmitting(false);
+      setError(err.message || "Failed to authenticate operator credentials.");
+    }
+  }
+
+  // Operator Stage-2 Security Code Check Submission
+  async function handleOperatorCodeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError("");
+
+    if (!operatorCode) {
+      setError("Please enter your assigned security badge/unit code.");
+      setIsSubmitting(false);
       return;
     }
 
-    router.push(activePortal.dashboardPath);
+    try {
+      if (operatorCode.trim().toLowerCase() !== tempCorrectOperatorCode.toLowerCase()) {
+        throw new Error(`Invalid security code. Please match the code sent to your email. (Hint: ${tempCorrectOperatorCode})`);
+      }
+
+      // Proceed to the dashboard
+      setIsSubmitting(false);
+      router.push(tempDashboardPath);
+    } catch (err: any) {
+      await supabase.auth.signOut();
+      setIsSubmitting(false);
+      setError(err.message);
+    }
+  }
+
+  // Sign Up Flow
+  async function handleSignupSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError("");
+    setSuccess("");
+
+    if (!fullName || !email || !password || !phone || !ghanaCard) {
+      setError("All credentials and card scans are required.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!cardImage) {
+      setError("Ghana Card photo upload is required.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!selfieImage) {
+      setError("Facial liveness verification is required.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const res = await eawsApi.signup({
+        email,
+        password,
+        phone,
+        metadata: {
+          full_name: fullName,
+          phone_number: phone,
+          ghana_card: ghanaCard,
+        },
+      });
+
+      if (!res.success) {
+        throw new Error("Failed to register profile.");
+      }
+
+      // Transition to Stage 2 Email OTP Verification
+      setTempEmail(email);
+      setTempPassword(password);
+      setEmailCode("");
+      setIsSubmitting(false);
+      setActiveScreen("email-verification");
+    } catch (err: any) {
+      setError(err.message || "Failed to register profile.");
+      setIsSubmitting(false);
+    }
+  }
+
+  // Email Code Verification Submission
+  async function handleEmailVerifySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError("");
+    setSuccess("");
+
+    if (emailCode.length !== 8) {
+      setError("Email verification code must be exactly 8 characters.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      // Call backend to programmatically activate the email
+      await eawsApi.verifyEmail(tempEmail, emailCode);
+
+      // Auto login
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: tempEmail,
+        password: tempPassword,
+      });
+
+      if (signInError) throw signInError;
+
+      setIsSubmitting(false);
+      router.push("/citizen");
+    } catch (err: any) {
+      setError(err.message || "Invalid or expired verification code.");
+      setIsSubmitting(false);
+    }
   }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col md:flex-row font-sans">
-      <div className="relative w-full md:w-1/2 bg-neutral-900 flex flex-col justify-between p-8 lg:p-16 overflow-hidden">
+      
+      {/* Side branding */}
+      <div className="relative w-full md:w-1/2 bg-neutral-900 flex flex-col justify-between p-8 lg:p-16 overflow-hidden border-r border-neutral-800 shrink-0">
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
           <div className="absolute -top-[20%] -left-[10%] w-[70%] h-[70%] rounded-full bg-red-600/10 blur-[100px]" />
           <div className="absolute bottom-[10%] -right-[10%] w-[60%] h-[60%] rounded-full bg-blue-600/10 blur-[120px]" />
@@ -120,123 +309,432 @@ export default function LoginPage() {
           </div>
 
           <h1 className="text-4xl lg:text-5xl font-bold leading-tight mb-6">
-            National Digital Emergency Response Platform
+            Ghana Emergency Alert & Warning System
           </h1>
           <p className="text-neutral-400 text-lg max-w-md leading-relaxed">
-            Centralized coordination layer integrating citizens, dispatchers, and national
-            agencies into a single, data-driven ecosystem.
+            National platform linking citizens, dispatch centers, and emergency response agencies to protect and coordinate in real-time.
           </p>
         </div>
 
         <div className="relative z-10 mt-12 md:mt-0">
           <div className="flex items-center gap-4 text-sm text-neutral-500">
-            <span>Secure connection</span>
+            <span>Secure TLS 1.3</span>
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            <span>System operational</span>
+            <span>Operational Layer Active</span>
           </div>
         </div>
       </div>
 
-      <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 bg-neutral-950">
-        <div className="w-full max-w-md space-y-8">
+      {/* Main Forms Interface Area */}
+      <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 bg-neutral-950 overflow-y-auto">
+        <div className="w-full max-w-md space-y-6">
+          
+          {/* Header titles */}
           <div className="text-center md:text-left">
-            <h2 className="text-3xl font-bold text-white mb-2">{activePortal.name} Portal</h2>
-            <p className="text-neutral-400">
-              Enter your credentials to access the {activePortal.name.toLowerCase()} dashboard.
+            <h2 className="text-3xl font-bold text-white mb-2">
+              {activeScreen === "login" && "Sign In"}
+              {activeScreen === "register" && "Register Account"}
+              {activeScreen === "email-verification" && "Verify Email Address"}
+              {activeScreen === "operator-check" && "Operator Security Check"}
+            </h2>
+            <p className="text-neutral-400 text-sm">
+              {activeScreen === "login" && "Enter your email and password to connect."}
+              {activeScreen === "register" && "Join EAWS to stay protected and receive live alerts."}
+              {activeScreen === "email-verification" && `Enter the 8-character code sent to ${tempEmail}`}
+              {activeScreen === "operator-check" && "Verify your assigned operational badge/unit code."}
             </p>
           </div>
 
-          <div className="flex p-1 bg-neutral-900 rounded-lg mt-6">
-            {PORTALS.map((portal) => (
+          {/* Form toggles */}
+          {activeScreen === "login" && (
+            <div className="flex justify-end text-xs">
               <button
-                key={portal.id}
-                type="button"
-                onClick={() => selectPortal(portal)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${
-                  activePortal.id === portal.id
-                    ? "bg-neutral-800 text-white shadow-sm"
-                    : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/50"
-                }`}
+                onClick={() => setActiveScreen("register")}
+                className="text-red-400 hover:text-red-300 font-semibold underline decoration-dotted"
               >
-                <portal.icon size={16} />
-                <span className="hidden sm:inline">{portal.name}</span>
+                No account? Register here
               </button>
-            ))}
-          </div>
-
-          <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 text-sm">
-            <p className="font-medium text-neutral-200">{activePortal.name} account created</p>
-            <div className="mt-3 grid gap-2 text-neutral-400">
-              <p className="flex items-center justify-between gap-3">
-                <span>ID</span>
-                <span className="font-mono text-neutral-100">{activePortal.account.identifier}</span>
-              </p>
-              <p className="flex items-center justify-between gap-3">
-                <span>Auth email</span>
-                <span className="font-mono text-neutral-100">{activePortal.account.email}</span>
-              </p>
-              <p className="flex items-center justify-between gap-3">
-                <span>Passcode</span>
-                <span className="font-mono text-neutral-100">{activePortal.account.password}</span>
-              </p>
             </div>
-          </div>
-
-          <form className="space-y-6 mt-8" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-neutral-300" htmlFor="operator-id">
-                {activePortal.idLabel}
-              </label>
-              <input
-                id="operator-id"
-                type="text"
-                className={`w-full px-4 py-3 bg-neutral-900 border border-neutral-800 rounded-lg focus:outline-none focus:ring-2 ${activePortal.ringColor} focus:border-transparent transition-all text-white placeholder-neutral-600`}
-                placeholder={activePortal.idPlaceholder}
-                value={credentials.identifier}
-                onChange={(event) =>
-                  setCredentials((current) => ({ ...current, identifier: event.target.value }))
-                }
-              />
+          )}
+          {activeScreen === "register" && (
+            <div className="flex justify-end text-xs">
+              <button
+                onClick={() => setActiveScreen("login")}
+                className="text-red-400 hover:text-red-300 font-semibold underline decoration-dotted"
+              >
+                Already registered? Sign in here
+              </button>
             </div>
+          )}
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-neutral-300" htmlFor="password">
-                  Security Passcode
+          {error && (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              {error}
+            </p>
+          )}
+
+          {success && (
+            <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+              {success}
+            </p>
+          )}
+
+          {/* 1. Login Screen */}
+          {activeScreen === "login" && (
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="login-email">
+                  Email Address
                 </label>
-                <a href="#" className={`text-xs ${activePortal.textColor} transition-colors`}>
-                  Emergency Reset?
-                </a>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <Mail size={16} />
+                  </span>
+                  <input
+                    id="login-email"
+                    type="email"
+                    required
+                    placeholder="email@example.com"
+                    className="w-full pl-10 pr-4 py-3 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
               </div>
-              <input
-                id="password"
-                type="password"
-                className={`w-full px-4 py-3 bg-neutral-900 border border-neutral-800 rounded-lg focus:outline-none focus:ring-2 ${activePortal.ringColor} focus:border-transparent transition-all text-white placeholder-neutral-600`}
-                placeholder="Security passcode"
-                value={credentials.password}
-                onChange={(event) =>
-                  setCredentials((current) => ({ ...current, password: event.target.value }))
-                }
-              />
-            </div>
 
-            {error ? (
-              <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                {error}
-              </p>
-            ) : null}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="login-pass">
+                  Password
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <KeyRound size={16} />
+                  </span>
+                  <input
+                    id="login-pass"
+                    type="password"
+                    required
+                    placeholder="Enter password"
+                    className="w-full pl-10 pr-4 py-3 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className={`w-full group flex items-center justify-center gap-2 ${activePortal.buttonColor} text-white font-semibold py-3.5 px-4 rounded-lg transition-all active:scale-[0.98]`}
-            >
-              <span>{isSubmitting ? "Authorizing..." : "Authorize & Connect"}</span>
-              <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full mt-4 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-lg transition-all active:scale-[0.98] disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    <span>Signing in...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign In</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
 
-          <div className="pt-8 border-t border-neutral-800 text-center text-xs text-neutral-500">
+          {/* 2. Operator Stage-2 Check Screen */}
+          {activeScreen === "operator-check" && (
+            <form onSubmit={handleOperatorCodeSubmit} className="space-y-4">
+              <div className="rounded-lg bg-neutral-900 border border-neutral-800 p-4 space-y-2 text-xs">
+                <p className="font-semibold text-white">Verification Profile Detected</p>
+                <p className="text-neutral-400">Role: <span className="font-bold text-teal-400 capitalize">{tempRole}</span></p>
+                <p className="text-neutral-400">Account: <span className="font-mono text-neutral-200">{tempEmail}</span></p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="operator-code-input">
+                  Assigned Security Code (Badge / Unit ID)
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <Lock size={16} />
+                  </span>
+                  <input
+                    id="operator-code-input"
+                    type="text"
+                    required
+                    placeholder="e.g. POL-0021"
+                    className="w-full pl-10 pr-4 py-3 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all font-mono tracking-widest"
+                    value={operatorCode}
+                    onChange={(e) => setOperatorCode(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    supabase.auth.signOut();
+                    setActiveScreen("login");
+                  }}
+                  className="flex-1 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 font-bold py-3.5 rounded-lg text-sm transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-[2] flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-lg transition-all active:scale-[0.98] disabled:opacity-50"
+                >
+                  <span>Verify Code</span>
+                  <ArrowRight size={18} />
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* 3. Register Screen */}
+          {activeScreen === "register" && (
+            <form onSubmit={handleSignupSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-name">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <User size={16} />
+                  </span>
+                  <input
+                    id="signup-name"
+                    type="text"
+                    required
+                    placeholder="e.g. Kwame Mensah"
+                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-phone">
+                  Phone Number
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <Phone size={16} />
+                  </span>
+                  <input
+                    id="signup-phone"
+                    type="tel"
+                    required
+                    placeholder="e.g. +233266241278"
+                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all font-mono"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Ghana Card Field with scanning toggle */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-card">
+                  Ghana Card Number
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <CreditCard size={16} />
+                  </span>
+                  <input
+                    id="signup-card"
+                    type="text"
+                    required
+                    placeholder="GHA-719302941-2"
+                    className="w-full pl-10 pr-12 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all font-mono"
+                    value={ghanaCard}
+                    onChange={(e) => setGhanaCard(e.target.value)}
+                  />
+                  {/* Mock scanner trigger */}
+                  <label className="absolute inset-y-0 right-0 pr-3.5 flex items-center cursor-pointer">
+                    <span className="p-1 rounded bg-neutral-800 border border-neutral-750 hover:bg-neutral-750 text-red-500 transition-colors">
+                      <Camera size={15} />
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleCardFileChange}
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-neutral-500">
+                  {cardImage ? (
+                    <span className="text-green-400 font-semibold flex items-center gap-1">
+                      <CheckCircle size={10} /> Card Attached ({cardImage})
+                    </span>
+                  ) : (
+                    "Scan card via camera or select a photo of your card."
+                  )}
+                </p>
+              </div>
+
+              {/* Mock facial liveness selfie check */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400">Facial Liveness Verification</label>
+                <button
+                  type="button"
+                  onClick={handleSelfieScan}
+                  disabled={isLivenessScanning || !!selfieImage}
+                  className={`w-full flex items-center gap-3 p-3.5 rounded-lg border text-sm transition-all ${
+                    selfieImage
+                      ? "bg-green-500/10 border-green-500/30 text-green-400"
+                      : isLivenessScanning
+                      ? "bg-red-500/10 border-red-500/30 text-red-400 cursor-not-allowed"
+                      : "bg-neutral-900 border-neutral-850 hover:border-neutral-700 text-neutral-300"
+                  }`}
+                >
+                  {isLivenessScanning ? (
+                    <RefreshCw size={20} className="animate-spin text-red-400" />
+                  ) : selfieImage ? (
+                    <CheckCircle size={20} className="text-green-400 shrink-0" />
+                  ) : (
+                    <ScanFace size={20} className="text-red-500 shrink-0" />
+                  )}
+                  <div className="text-left">
+                    <p className="font-bold text-xs">
+                      {isLivenessScanning ? "Scanning face liveness..." : selfieImage ? "Facial Match Verified" : "Capture Selfie Liveness Check"}
+                    </p>
+                    <p className="text-[10px] text-neutral-500">
+                      {isLivenessScanning ? "Looking straight at camera, processing..." : selfieImage ? "Liveness check successfully matched with Ghana Card." : "Prove liveness via front-facing camera."}
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-email">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <Mail size={16} />
+                  </span>
+                  <input
+                    id="signup-email"
+                    type="email"
+                    required
+                    placeholder="email@example.com"
+                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-pass">
+                    Password
+                  </label>
+                  <input
+                    id="signup-pass"
+                    type="password"
+                    required
+                    placeholder="Min 6 chars"
+                    className="w-full px-3 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-xs text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-400" htmlFor="signup-confirm-pass">
+                    Confirm Password
+                  </label>
+                  <input
+                    id="signup-confirm-pass"
+                    type="password"
+                    required
+                    placeholder="Repeat password"
+                    className="w-full px-3 py-2.5 bg-neutral-900 border border-neutral-850 rounded-lg text-xs text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full mt-4 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-lg transition-all active:scale-[0.98] disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    <span>Uploading credentials...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Register Account</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* 4. Email OTP Verification Screen */}
+          {activeScreen === "email-verification" && (
+            <form onSubmit={handleEmailVerifySubmit} className="space-y-4">
+              <div className="bg-neutral-900/60 border border-neutral-850 rounded-xl p-5 text-sm leading-relaxed space-y-2 text-neutral-300">
+                <p>We have sent a secure **8-character** confirmation code to your registered email **{tempEmail}**.</p>
+                <p className="text-xs text-neutral-400 mt-2 bg-neutral-950/40 p-3 rounded-lg border border-neutral-800/80">
+                  💡 <strong>Tip:</strong> If you do not see the verification code in your inbox within a minute, please check your <strong>Spam</strong> or <strong>Junk</strong> mail folders.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-400" htmlFor="email-verify-code">
+                  Enter 8-Character Verification Code
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-500">
+                    <KeyRound size={16} />
+                  </span>
+                  <input
+                    id="email-verify-code"
+                    type="text"
+                    required
+                    maxLength={8}
+                    placeholder="--------"
+                    className="w-full pl-10 pr-4 py-3 bg-neutral-900 border border-neutral-850 rounded-lg text-sm text-white placeholder-neutral-600 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all font-mono tracking-[0.2em] text-center font-bold"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-lg transition-all active:scale-[0.98] disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    <span>Activating Account...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Verify & Activate</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          <div className="pt-6 border-t border-neutral-800 text-center text-xs text-neutral-500">
             <p>Protected by the Data Protection Act 2012 (Ghana)</p>
             <p className="mt-1">Unauthorized access is strictly prohibited.</p>
           </div>

@@ -1,3 +1,5 @@
+"use client";
+
 import PortalDashboard from "@/components/PortalDashboard";
 
 export default function FireDashboardPage() {
@@ -16,18 +18,21 @@ export default function FireDashboardPage() {
       queueTitle="Fire Assignments"
       queue={[
         {
+          id: "fire-1",
           title: "Market smoke report",
           location: "Makola Market",
           priority: "Critical",
           time: "2m ago",
         },
         {
+          id: "fire-2",
           title: "Electrical fire alert",
           location: "Madina Zongo Junction",
           priority: "High",
           time: "9m ago",
         },
         {
+          id: "fire-3",
           title: "Rescue standby",
           location: "Labadi Beach Road",
           priority: "Medium",
