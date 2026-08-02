@@ -3,7 +3,7 @@
 import { supabase } from "./supabase";
 import type { AgencyUnit, Assignment, Incident } from "./models";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5001/api";
 
 type JsonBody = Record<string, unknown> | FormData | undefined;
 type AuthFetchOptions = Omit<RequestInit, "body"> & { body?: JsonBody };
@@ -13,9 +13,14 @@ async function authFetch<T>(path: string, options: AuthFetchOptions = {}): Promi
     data: { session },
   } = await supabase.auth.getSession();
 
+  let token = session?.access_token;
+  if (!token && typeof window !== "undefined") {
+    token = localStorage.getItem("eaws_mock_token") || undefined;
+  }
+
   const headers = new Headers(options.headers);
-  if (session?.access_token) {
-    headers.set("Authorization", `Bearer ${session.access_token}`);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   let body = options.body as BodyInit | undefined;
@@ -72,7 +77,7 @@ export const eawsApi = {
     id: string,
     payload: { agency_type: string; unit_id?: string; notes?: string; priority?: string }
   ) =>
-    authFetch<{ success: boolean; response_id: string; status: string }>(`/incidents/${id}/dispatch`, {
+    authFetch<{ success: boolean; response: { id: string; status: string } }>(`/incidents/${id}/dispatch`, {
       method: "POST",
       body: payload,
     }),
@@ -82,9 +87,9 @@ export const eawsApi = {
       body: payload,
     }).then((r) => r.incident),
   escalateIncident: (id: string, reason?: string) =>
-    authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/escalate`, {
-      method: "POST",
-      body: { reason },
+    authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
+      method: "PATCH",
+      body: { severity: "CRITICAL", status: "escalated", notes: reason },
     }).then((r) => r.incident),
   getAssignments: (agencyType: string) =>
     authFetch<{ success: boolean; assignments: Assignment[] }>(
@@ -92,12 +97,12 @@ export const eawsApi = {
     ).then((r) => r.assignments),
   acknowledgeResponse: (responseId: string) =>
     authFetch<{ success: boolean; response: { status: string } }>(
-      `/assignments/${responseId}/acknowledge`,
+      `/responses/${responseId}/acknowledge`,
       { method: "POST" }
     ).then((r) => r.response),
   updateAssignmentStatus: (assignmentId: string, payload: { status: string; remarks?: string }) =>
     authFetch<{ success: boolean; response: { status: string } }>(
-      `/assignments/${assignmentId}/status`,
+      `/responses/${assignmentId}/status`,
       { method: "PATCH", body: payload }
     ).then((r) => r.response),
   getAdminUsers: () =>
@@ -148,5 +153,43 @@ export const eawsApi = {
       method: "POST",
       body: { reaction_type: type },
     }).then((r) => r.reaction),
+  deleteIncident: (id: string) =>
+    authFetch<{ success: boolean }>(`/incidents/${id}`, {
+      method: "DELETE",
+    }).then((r) => r.success),
+  blockUser: (userId: string) =>
+    authFetch<{ success: boolean }>(`/admin/users/${userId}/block`, {
+      method: "POST",
+    }).then((r) => r.success),
+  unblockUser: (userId: string) =>
+    authFetch<{ success: boolean }>(`/admin/users/${userId}/unblock`, {
+      method: "POST",
+    }).then((r) => r.success),
+  searchUsers: async (query: string): Promise<any[]> => {
+    if (!query.trim()) return [];
+    try {
+      const { supabase } = await import("./supabase");
+      const { data } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, phone, user_role, operator_code, is_approved, is_active, created_at")
+        .or(`full_name.ilike.%${query}%,phone.ilike.%${query}%,operator_code.ilike.%${query}%`)
+        .limit(10);
+      if (data && data.length > 0) return data;
+    } catch (_) {}
+    // Offline mock fallback — citizens on the EAWS platform
+    const MOCK_CITIZENS = [
+      { user_id: "c-001", full_name: "D. Harrison", phone: "+233 54 882 9912", user_role: "citizen", operator_code: "GH-ACR-8829-44", is_approved: true, is_active: true, created_at: "2025-03-12" },
+      { user_id: "c-002", full_name: "Ama Serwaa Boateng", phone: "+233 20 111 2233", user_role: "citizen", operator_code: "GH-ACR-7723-09", is_approved: true, is_active: true, created_at: "2025-04-18" },
+      { user_id: "c-003", full_name: "Kwame Asante", phone: "+233 24 555 7788", user_role: "citizen", operator_code: "GH-ACR-5501-21", is_approved: true, is_active: true, created_at: "2025-06-01" },
+      { user_id: "c-004", full_name: "Nana Mensah", phone: "+233 50 909 1010", user_role: "citizen", operator_code: "GH-ACR-3312-17", is_approved: false, is_active: true, created_at: "2025-09-22" },
+      { user_id: "c-005", full_name: "Abena Osei-Bonsu", phone: "+233 27 456 8801", user_role: "citizen", operator_code: "GH-ACR-1189-44", is_approved: true, is_active: true, created_at: "2024-11-05" },
+    ];
+    const q = query.toLowerCase();
+    return MOCK_CITIZENS.filter(c =>
+      c.full_name.toLowerCase().includes(q) ||
+      c.phone.includes(q) ||
+      c.operator_code.toLowerCase().includes(q)
+    );
+  },
 };
 

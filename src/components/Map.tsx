@@ -95,7 +95,7 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
   // Ambulance movement & follow states
   const [animatedUnitCoords, setAnimatedUnitCoords] = useState<Record<string, [number, number]>>({});
-  const [autoFollow, setAutoFollow] = useState(true);
+  const [autoFollow, setAutoFollow] = useState(false);
 
   // Google Maps instances state
   const [googleLoaded, setGoogleLoaded] = useState(false);
@@ -387,15 +387,11 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
     const google = (window as any).google;
     if (!google) return;
 
-    // Clear old elements
+    // Clear old elements (keep the active InfoWindow open if it belongs to an element that is still active)
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
     polylinesRef.current.forEach((p) => p.setMap(null));
     polylinesRef.current = [];
-
-    if (activeInfoWindowRef.current) {
-      activeInfoWindowRef.current.close();
-    }
 
     // 1. Draw Incidents (if not customized or route updated)
     incidents.forEach((incident) => {
@@ -422,10 +418,11 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
         <div style="color: #1c1c1e; font-family: monospace; font-size: 11px; padding: 4px; line-height: 1.3;">
           <h4 style="margin: 0 0 4px 0; color: #dc2626; font-weight: 800;">${incident.title}</h4>
           <p style="margin: 0 0 6px 0; color: #55555c;">${incident.location_name}</p>
-          <div style="background-color: #f2f2f7; border: 1px solid #d1d1d6; padding: 6px; border-radius: 4px;">
+          <div style="background-color: #f2f2f7; border: 1px solid #d1d1d6; padding: 6px; border-radius: 4px; margin-bottom: 8px;">
             <strong>Category:</strong> ${incident.category}<br/>
             <strong>Severity:</strong> ${incident.severity}
           </div>
+          <a href="/citizen?id=${incident.user_id || incident.id}" target="_blank" style="display: block; text-align: center; background-color: #dc2626; color: white; padding: 6px; border-radius: 4px; text-decoration: none; font-weight: bold;">View Citizen Profile</a>
         </div>
       `;
 

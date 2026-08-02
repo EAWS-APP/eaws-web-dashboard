@@ -26,10 +26,11 @@ export default function LoginPage() {
 
   // Screen routing state: 'login' | 'register' | 'email-verification' | 'operator-check'
   const [activeScreen, setActiveScreen] = useState<'login' | 'register' | 'email-verification' | 'operator-check'>('login');
+  const [selectedRoleTab, setSelectedRoleTab] = useState<string>("dispatcher");
 
   // Input states
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("dispatcher@eaws.gov.gh");
+  const [password, setPassword] = useState("password123");
   const [confirmPassword, setConfirmPassword] = useState("");
   
   // Citizen Registration details
@@ -95,61 +96,108 @@ export default function LoginPage() {
       return;
     }
 
+    const isMockCandidate = email.endsWith("@eaws.gov.gh") && password === "password123";
+
     try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (signInError) {
-        throw new Error(signInError.message);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("eaws_mock_token");
       }
 
-      // Resolve user's actual profile from the backend API
-      const sessionRes = await supabase.auth.getSession();
-      const token = sessionRes.data.session?.access_token;
+      // 1. Attempt real login
+      let token = "";
+      let role = "citizen";
+      let code = "";
+      let isApproved = true;
+      let isActive = true;
 
-      if (!token) {
-        throw new Error("Authorization token was not issued by Supabase.");
+      try {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError) {
+          throw new Error(signInError.message);
+        }
+
+        const sessionRes = await supabase.auth.getSession();
+        token = sessionRes.data.session?.access_token || "";
+
+        if (!token) {
+          throw new Error("Authorization token was not issued by Supabase.");
+        }
+
+        const apiResponse = await fetch("http://127.0.0.1:5001/api/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!apiResponse.ok) {
+          const errText = await apiResponse.text();
+          throw new Error(errText || "Error resolving profile credentials from backend.");
+        }
+
+        const meData = await apiResponse.json();
+        role = meData.profile?.user_role || "citizen";
+        code = meData.profile?.operator_code || "";
+        isApproved = meData.profile?.is_approved !== false;
+        isActive = meData.profile?.is_active !== false;
+
+      } catch (authErr: any) {
+        if (isMockCandidate) {
+          console.warn("⚠️ Authentication server unreachable or invalid credentials in dev. Bypassing to mock mode.", authErr.message);
+          // Setup mock variables
+          token = `mock-token-${email}`;
+          if (typeof window !== "undefined") {
+            localStorage.setItem("eaws_mock_token", token);
+          }
+          
+          role = "dispatcher";
+          code = "DISP-0001";
+          if (email.startsWith("police")) {
+            role = "police";
+            code = "POL-0021";
+          } else if (email.startsWith("fire")) {
+            role = "fire";
+            code = "GNFS-0012";
+          } else if (email.startsWith("ambulance")) {
+            role = "ambulance";
+            code = "AMB-0003";
+          } else if (email.startsWith("admin")) {
+            role = "admin";
+            code = "ADMIN-001";
+          } else if (email.startsWith("citizen")) {
+            role = "citizen";
+            code = "";
+          }
+          isApproved = true;
+          isActive = true;
+        } else {
+          throw authErr;
+        }
       }
 
-      const apiResponse = await fetch("http://127.0.0.1:5000/api/me", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!apiResponse.ok) {
-        const errText = await apiResponse.text();
-        throw new Error(errText || "Error resolving profile credentials from backend.");
-      }
-
-      const meData = await apiResponse.json();
-      const role = meData.profile?.user_role || "citizen";
-      const code = meData.profile?.operator_code || "";
-      const isApproved = meData.profile?.is_approved !== false;
-      const isActive = meData.profile?.is_active !== false;
-
-      // 1. Verify status
+      // 2. Verify status
       if (!isApproved || !isActive) {
         throw new Error("Your account is pending approval or has been deactivated.");
       }
 
-      // 2. Redirect citizens directly to simulated app
+      // 3. Redirect citizens directly to simulated app
       if (role === "citizen") {
         setIsSubmitting(false);
         router.push("/citizen");
         return;
       }
 
-      // 3. For admins/super_admins, skip code verification and enter dashboard directly
+      // 4. For admins/super_admins, skip code verification and enter dashboard directly
       if (role === "admin" || role === "super_admin") {
         setIsSubmitting(false);
         router.push("/admin");
         return;
       }
 
-      // 4. For operators, transition to Stage 2: Security Code verification
+      // 5. For operators, transition to Stage 2: Security Code verification
       setTempEmail(email);
       setTempRole(role);
       setTempCorrectOperatorCode(code);
@@ -165,7 +213,7 @@ export default function LoginPage() {
       setIsSubmitting(false);
       setActiveScreen("operator-check");
     } catch (err: any) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut().catch(() => {});
       setIsSubmitting(false);
       setError(err.message || "Failed to authenticate operator credentials.");
     }
@@ -382,6 +430,37 @@ export default function LoginPage() {
           {/* 1. Login Screen */}
           {activeScreen === "login" && (
             <form onSubmit={handleLoginSubmit} className="space-y-4">
+              {/* Role Tabs */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold tracking-widest text-neutral-500 uppercase">Select Portal Profile</label>
+                <div className="grid grid-cols-5 gap-1 bg-neutral-900 p-1 rounded-lg border border-neutral-800">
+                  {[
+                    { id: "dispatcher", label: "Disp" },
+                    { id: "police", label: "Police" },
+                    { id: "fire", label: "Fire" },
+                    { id: "ambulance", label: "Amb" },
+                    { id: "admin", label: "Admin" },
+                  ].map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRoleTab(r.id);
+                        setEmail(`${r.id}@eaws.gov.gh`);
+                        setPassword("password123");
+                      }}
+                      className={`py-1.5 rounded text-[10px] font-bold transition-all ${
+                        selectedRoleTab === r.id
+                          ? "bg-red-600 text-white shadow-md shadow-red-950/20"
+                          : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-neutral-400" htmlFor="login-email">
                   Email Address

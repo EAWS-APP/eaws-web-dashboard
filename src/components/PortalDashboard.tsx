@@ -878,15 +878,24 @@ export default function PortalDashboard({
                     </td>
                     <td className="p-4 text-neutral-400">{inc.time}</td>
                     <td className="p-4 text-right">
-                      <button
-                        onClick={() => {
-                          if (onSelect) onSelect(inc.id);
-                          setActiveSidebarTab("map");
-                        }}
-                        className="px-3 py-1 bg-primary text-on-primary hover:opacity-90 font-bold rounded text-[10px] uppercase transition-all"
-                      >
-                        Track View
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <a
+                          href={`/citizen?id=${inc.incident_metadata?.user_id || inc.id}`}
+                          target="_blank"
+                          className="px-3 py-1 bg-neutral-800 text-white hover:bg-neutral-700 font-bold rounded text-[10px] uppercase transition-all flex items-center gap-1 border border-neutral-700 h-[26px]"
+                        >
+                          Profile
+                        </a>
+                        <button
+                          onClick={() => {
+                            if (onSelect) onSelect(inc.id);
+                            setActiveSidebarTab("map");
+                          }}
+                          className="px-3 py-1 bg-primary text-on-primary hover:opacity-90 font-bold rounded text-[10px] uppercase transition-all h-[26px]"
+                        >
+                          Track View
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1058,10 +1067,7 @@ export default function PortalDashboard({
 
         setCommunityPosts(prev => prev.map(post => {
           if (post.id === postId) {
-            return {
-              ...post,
-              comments_count: (post.comments_count ?? 0) + 1
-            };
+            return { ...post };
           }
           return post;
         }));
@@ -1086,6 +1092,24 @@ export default function PortalDashboard({
           <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded text-[8px] uppercase font-bold">
             {communityPosts.length} ACTIVE DISCUSSION POSTS
           </span>
+        </div>
+
+        {/* Citizen Search Widget */}
+        <div className="bg-surface-container p-3 rounded-xl border border-outline-variant flex items-center gap-3 mb-4">
+          <span className="material-symbols-outlined text-neutral-400 text-sm">search</span>
+          <input 
+            type="text" 
+            placeholder="Lookup Citizen Profile (e.g., GH-ACR-8829-44) - Press Enter" 
+            className="flex-1 bg-transparent border-none text-xs text-white placeholder-neutral-600 focus:outline-none font-sans"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && e.currentTarget.value) {
+                e.preventDefault();
+                window.open(`/citizen?id=${encodeURIComponent(e.currentTarget.value.trim())}`, '_blank');
+                e.currentTarget.value = '';
+              }
+            }}
+          />
+          <span className="text-[9px] text-neutral-500 bg-neutral-800 px-2 py-1 rounded font-bold">↵</span>
         </div>
 
         {/* 1. Post Composer */}
@@ -1180,13 +1204,13 @@ export default function PortalDashboard({
             <div key={post.id} className="bg-[#111112] border border-neutral-850 rounded-xl p-4 space-y-3">
               {/* Post Header */}
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-neutral-800 text-white font-bold flex items-center justify-center shrink-0">
+                <a href={`/citizen?id=${post.username}`} target="_blank" className="w-8 h-8 rounded-full bg-neutral-800 text-white font-bold flex items-center justify-center shrink-0 hover:ring-2 hover:ring-primary transition-all cursor-pointer">
                   {post.avatar}
-                </div>
+                </a>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-white text-xs leading-none">{post.author}</span>
-                    <span className="text-[10px] text-neutral-500 font-sans">@{post.username}</span>
+                    <a href={`/citizen?id=${post.username}`} target="_blank" className="font-bold text-white text-xs leading-none hover:underline hover:text-primary transition-colors cursor-pointer">{post.author}</a>
+                    <a href={`/citizen?id=${post.username}`} target="_blank" className="text-[10px] text-neutral-500 font-sans hover:text-primary transition-colors cursor-pointer">@{post.username}</a>
                   </div>
                   <span className="text-[8px] text-neutral-500 mt-0.5 block">{post.time}</span>
                 </div>
