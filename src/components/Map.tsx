@@ -1,8 +1,46 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Sun, Moon, Search, Star, Route, X, MapPin } from "lucide-react";
 import type { AgencyUnit, Incident } from "@/lib/models";
+
+let googleMapsScriptPromise: Promise<void> | null = null;
+
+function loadGoogleMapsScript() {
+  if (typeof window !== "undefined" && (window as any).google?.maps) {
+    return Promise.resolve();
+  }
+  if (!googleMapsScriptPromise) {
+    googleMapsScriptPromise = new Promise<void>((resolve, reject) => {
+      let script = document.querySelector<HTMLScriptElement>(
+        'script[src*="maps.googleapis.com/maps/api/js"]'
+      );
+      if (!script) {
+        script = document.createElement("script");
+        script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyBsWnNq9bnzB8UATSXH0Hxiv6rDbQirD-Y&libraries=places`;
+        script.async = true;
+      }
+      script.addEventListener(
+        "load",
+        () => {
+          if ((window as any).google?.maps) resolve();
+          else reject(new Error("Google Maps loaded without its maps API."));
+        },
+        { once: true }
+      );
+      script.addEventListener(
+        "error",
+        () => reject(new Error("Google Maps JavaScript API failed to load.")),
+        { once: true }
+      );
+      if (!script.isConnected) document.head.appendChild(script);
+    }).catch((error: unknown) => {
+      googleMapsScriptPromise = null;
+      throw error;
+    });
+  }
+  return googleMapsScriptPromise;
+}
 
 // Helper to calculate distance in KM (Haversine formula)
 function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -67,9 +105,10 @@ interface MapProps {
   incidents?: Incident[];
   units?: AgencyUnit[];
   onAmbulanceMove?: (coords: [number, number]) => void;
+  onSelectIncident?: (incidentId: string) => void;
 }
 
-export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents = [], units = [], onAmbulanceMove }: MapProps) {
+export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents = [], units = [], onAmbulanceMove, onSelectIncident }: MapProps) {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [searchQuery, setSearchQuery] = useState("");
   const [flyToCoords, setFlyToCoords] = useState<[number, number] | null>(null);
@@ -99,8 +138,10 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
   // Google Maps instances state
   const [googleLoaded, setGoogleLoaded] = useState(false);
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
   const [mapInstance, setMapInstance] = useState<any>(null);
+  const mapInstanceRef = useRef<any>(null);
 
   // Keep references to map objects to perform cleanly update/cleanup
   const markersRef = useRef<any[]>([]);
@@ -110,20 +151,25 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
   // Load Google Maps JavaScript API
   useEffect(() => {
-    if ((window as any).google) {
-      setGoogleLoaded(true);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyBsWnNq9bnzB8UATSXH0Hxiv6rDbQirD-Y&libraries=places`;
-    script.async = true;
-    script.onload = () => setGoogleLoaded(true);
-    document.head.appendChild(script);
+    let active = true;
+    loadGoogleMapsScript()
+      .then(() => {
+        if (active) setGoogleLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : "Unknown Google Maps error";
+        setMapLoadError(message);
+        console.error("Map could not initialize:", error);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Initialize Map
   useEffect(() => {
-    if (!googleLoaded || !mapRef.current) return;
+    if (!googleLoaded || !mapRef.current || mapInstanceRef.current) return;
     const google = (window as any).google;
     const map = new google.maps.Map(mapRef.current, {
       center: { lat: center[0], lng: center[1] },
@@ -132,6 +178,7 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
       disableDefaultUI: true,
       zoomControl: false,
     });
+    mapInstanceRef.current = map;
     setMapInstance(map);
   }, [googleLoaded]);
 
@@ -247,23 +294,29 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
     });
   };
 
-  // Fallback ambulance unit
-  const activeUnits = units.length > 0 ? units : [
-    {
-      id: "mock-amb-01",
-      name: "AMB-01 (STAGING)",
-      agency_type: "ambulance",
-      status: "en-route",
-      latitude: 5.6322,
-      longitude: -0.1585,
-      created_at: new Date().toISOString()
-    }
-  ];
+  const activeUnits = units;
+  const locatedIncidents = useMemo(
+    () =>
+      incidents.filter(
+        (incident): incident is Incident & { latitude: number; longitude: number } =>
+          incident.latitude !== null &&
+          incident.longitude !== null &&
+          Number.isFinite(incident.latitude) &&
+          Number.isFinite(incident.longitude)
+      ),
+    [incidents]
+  );
 
   // Active routing endpoint selection
-  const activeDestinationCoords = customDestination 
-    ? customDestination.coords 
-    : (incidents[0] ? [incidents[0].latitude, incidents[0].longitude] as [number, number] : null);
+  const activeDestinationCoords = useMemo(
+    () =>
+      customDestination
+        ? customDestination.coords
+        : locatedIncidents[0]
+          ? [locatedIncidents[0].latitude, locatedIncidents[0].longitude] as [number, number]
+          : null,
+    [customDestination, locatedIncidents]
+  );
 
   // Simulated movement along route points
   useEffect(() => {
@@ -316,7 +369,7 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
   }, [activeDestinationCoords, activeUnits, autoFollow]);
 
   // Find nearest responder unit for each incident to simulate routing lines
-  const routingLines = incidents
+  const routingLines = locatedIncidents
     .map((incident) => {
       if (activeUnits.length === 0) return null;
       
@@ -395,6 +448,7 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
     // 1. Draw Incidents (if not customized or route updated)
     incidents.forEach((incident) => {
+      if (incident.latitude === null || incident.longitude === null) return;
       // If custom route is active, hide main incident pin to reduce visual noise
       if (customDestination) return;
 
@@ -415,14 +469,14 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
       });
 
       const infoContent = `
-        <div style="color: #1c1c1e; font-family: monospace; font-size: 11px; padding: 4px; line-height: 1.3;">
-          <h4 style="margin: 0 0 4px 0; color: #dc2626; font-weight: 800;">${incident.title}</h4>
-          <p style="margin: 0 0 6px 0; color: #55555c;">${incident.location_name}</p>
-          <div style="background-color: #f2f2f7; border: 1px solid #d1d1d6; padding: 6px; border-radius: 4px; margin-bottom: 8px;">
+        <div style="color: #1c1c1e; font-family: system-ui, -apple-system, sans-serif; font-size: 11px; padding: 4px; line-height: 1.4; min-width: 200px;">
+          <h4 style="margin: 0 0 4px 0; color: #dc2626; font-weight: 800; font-size: 12px;">${incident.title}</h4>
+          <p style="margin: 0 0 6px 0; color: #55555c; font-size: 10px;">${incident.location_name || 'Accra Metro'}</p>
+          <div style="background-color: #f2f2f7; border: 1px solid #d1d1d6; padding: 6px; border-radius: 6px; margin-bottom: 8px;">
             <strong>Category:</strong> ${incident.category}<br/>
             <strong>Severity:</strong> ${incident.severity}
           </div>
-          <a href="/citizen?id=${incident.user_id || incident.id}" target="_blank" style="display: block; text-align: center; background-color: #dc2626; color: white; padding: 6px; border-radius: 4px; text-decoration: none; font-weight: bold;">View Citizen Profile</a>
+          <button onclick="window.__eawsSelectIncident && window.__eawsSelectIncident('${incident.id}')" style="display: block; width: 100%; text-align: center; background-color: #dc2626; color: white; padding: 6px 8px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; transition: background 0.2s;">View & Triage Details</button>
         </div>
       `;
 
@@ -431,6 +485,7 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
         if (activeInfoWindowRef.current) activeInfoWindowRef.current.close();
         infowindow.open(mapInstance, marker);
         activeInfoWindowRef.current = infowindow;
+        onSelectIncident?.(incident.id);
       });
 
       markersRef.current.push(marker);
@@ -529,6 +584,16 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
   }, [mapInstance, incidents, activeUnits, animatedUnitCoords, routingLines, customDestination]);
 
+  // Register window callback for InfoWindow details button
+  useEffect(() => {
+    (window as any).__eawsSelectIncident = (id: string) => {
+      onSelectIncident?.(id);
+    };
+    return () => {
+      delete (window as any).__eawsSelectIncident;
+    };
+  }, [onSelectIncident]);
+
   // Clean up custom search marker when place is closed
   const handleClosePlaceCard = () => {
     setSelectedPlace(null);
@@ -547,21 +612,21 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
     <div className="w-full h-full relative z-0 flex overflow-hidden">
       {/* Tactical HUD overlays */}
       <div className="scanner-line pointer-events-none" />
-      <div className="scanline absolute inset-0 z-30 opacity-40 pointer-events-none" />
+      <div className="scanline absolute inset-0 z-30 opacity-30 pointer-events-none" />
       
-      {/* Floating Location Search Widget */}
-      <div className="absolute top-4 left-4 z-[1000] w-72 bg-neutral-900/90 backdrop-blur border border-neutral-800 rounded-lg p-1.5 shadow-lg select-none pointer-events-auto">
-        <div className="relative flex items-center bg-neutral-950 rounded border border-neutral-800 px-2 py-1.5">
-          <Search size={14} className="text-neutral-500 mr-2 shrink-0" />
+      {/* Floating Location Search Widget (Top Left) */}
+      <div className="absolute top-3.5 left-3.5 z-[1000] w-72 select-none pointer-events-auto">
+        <div className="relative flex items-center bg-[#141414]/90 backdrop-blur-md rounded-xl border border-white/10 px-3 py-2 shadow-2xl transition-all focus-within:border-white/30">
+          <Search size={14} className="text-neutral-400 mr-2.5 shrink-0" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search Accra landmarks / streets..."
-            className="w-full bg-transparent border-none text-xs text-white placeholder-neutral-500 focus:outline-none"
+            className="w-full bg-transparent border-none text-[12px] text-white placeholder-neutral-500 focus:outline-none"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="text-neutral-500 hover:text-white shrink-0 ml-1">
+            <button onClick={() => setSearchQuery("")} className="text-neutral-400 hover:text-white shrink-0 ml-1 p-0.5 rounded-full hover:bg-white/10">
               <X size={12} />
             </button>
           )}
@@ -569,15 +634,15 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
         {/* Search Suggestion Dropdown */}
         {suggestions.length > 0 && (
-          <div className="mt-1 bg-neutral-900 border border-neutral-800 rounded shadow-2xl max-h-48 overflow-y-auto divide-y divide-neutral-850">
+          <div className="mt-1.5 bg-[#141414]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl max-h-52 overflow-y-auto divide-y divide-white/5 overflow-hidden">
             {suggestions.map((l) => (
               <div
                 key={l.placeId}
                 onClick={() => handleSelectLandmark(l.placeId, l.name)}
-                className="p-2 text-[10px] hover:bg-neutral-800 cursor-pointer flex flex-col gap-0.5"
+                className="px-3.5 py-2.5 text-[11px] hover:bg-white/5 cursor-pointer flex flex-col gap-0.5 transition-colors"
               >
                 <span className="font-semibold text-white">{l.name}</span>
-                <span className="text-neutral-500 font-mono text-[9px]">{l.street}</span>
+                <span className="text-neutral-400 font-mono text-[9.5px]">{l.street}</span>
               </div>
             ))}
           </div>
@@ -586,50 +651,50 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
 
       {/* Slide-out Place Details Card */}
       {selectedPlace && (
-        <div className="absolute top-16 left-4 z-[1000] w-72 bg-[#1C1C1E]/95 border border-[#3A3A3C] rounded-lg overflow-hidden shadow-2xl select-none pointer-events-auto flex flex-col font-mono text-[10px] transition-all duration-300">
+        <div className="absolute top-16 left-3.5 z-[1000] w-72 bg-[#18181a]/95 backdrop-blur-lg border border-white/15 rounded-2xl overflow-hidden shadow-2xl select-none pointer-events-auto flex flex-col font-sans text-[11px] transition-all duration-300">
           <div className="relative h-28 w-full bg-neutral-950">
             <img 
               src={selectedPlace.photoUrl} 
               alt={selectedPlace.name} 
-              className="w-full h-full object-cover opacity-80"
+              className="w-full h-full object-cover opacity-85"
             />
             <button 
               onClick={handleClosePlaceCard}
-              className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center text-neutral-400 hover:text-white hover:bg-black/80 transition-all"
+              className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center text-neutral-300 hover:text-white hover:bg-black/80 transition-all"
             >
               <X size={12} />
             </button>
           </div>
-          <div className="p-3 space-y-2.5">
+          <div className="p-3.5 space-y-2.5">
             <div>
-              <h3 className="font-extrabold text-white text-xs uppercase leading-tight">{selectedPlace.name}</h3>
-              <p className="text-[8px] text-neutral-400 leading-normal mt-0.5">{selectedPlace.address}</p>
+              <h3 className="font-bold text-white text-[12px] uppercase leading-tight">{selectedPlace.name}</h3>
+              <p className="text-[10px] text-neutral-400 leading-normal mt-0.5">{selectedPlace.address}</p>
             </div>
 
-            <div className="flex items-center gap-2 border-y border-neutral-800 py-1.5">
-              <span className="flex items-center gap-0.5 text-amber-500 font-bold">
-                <Star size={10} fill="currentColor" />
+            <div className="flex items-center gap-2 border-y border-white/5 py-2">
+              <span className="flex items-center gap-1 text-amber-400 font-bold text-[11px]">
+                <Star size={11} fill="currentColor" />
                 {selectedPlace.rating.toFixed(1)}
               </span>
-              <span className="text-neutral-500">·</span>
-              <span className="text-neutral-400 uppercase text-[8px] flex items-center gap-0.5">
-                <MapPin size={10} className="text-primary" />
-                Verified GPS Node
+              <span className="text-neutral-600">·</span>
+              <span className="text-neutral-400 text-[10px] flex items-center gap-1">
+                <MapPin size={11} className="text-red-500" />
+                Accra Location
               </span>
             </div>
 
             <div className="flex gap-2">
               <button 
                 onClick={() => setCustomDestination({ coords: selectedPlace.coords, title: selectedPlace.name })}
-                className="flex-1 bg-primary hover:bg-primary/90 text-on-primary font-bold py-1.5 rounded flex items-center justify-center gap-1 uppercase transition-all"
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2 rounded-xl flex items-center justify-center gap-1.5 text-[11px] transition-all shadow-md shadow-red-600/30"
               >
-                <Route size={10} />
+                <Route size={12} />
                 Route to Place
               </button>
               {customDestination && (
                 <button 
                   onClick={handleResetRoute}
-                  className="px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded flex items-center justify-center uppercase transition-all"
+                  className="px-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold rounded-xl flex items-center justify-center text-[10px] transition-all"
                   title="Reset to Incident Route"
                 >
                   Reset
@@ -640,75 +705,84 @@ export default function Map({ center = [5.6037, -0.1870], zoom = 12, incidents =
         </div>
       )}
 
-      {/* Floating Auto-Follow Control */}
-      <div className="absolute top-4 right-[250px] z-[1000] flex bg-neutral-900/90 backdrop-blur border border-neutral-800 rounded-lg p-2.5 shadow-lg select-none pointer-events-auto items-center gap-1.5 h-9">
-        <label className="flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-white uppercase font-mono">
-          <input
-            type="checkbox"
-            checked={autoFollow}
-            onChange={(e) => setAutoFollow(e.target.checked)}
-            className="rounded border-neutral-700 bg-neutral-950 text-primary focus:ring-0 w-3.5 h-3.5"
-          />
-          Auto-Follow Responders
-        </label>
-      </div>
+      {/* ── Top-Right Map Controls Toolbar ── */}
+      <div className="absolute top-3.5 right-3.5 z-[1000] flex items-center gap-2 select-none pointer-events-auto">
+        {activeUnits.length > 0 && (
+          <div className="flex bg-[#141414]/90 backdrop-blur-md border border-white/10 rounded-xl px-3 py-1.5 shadow-xl items-center gap-2">
+            <label className="flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-white uppercase font-mono">
+              <input
+                type="checkbox"
+                checked={autoFollow}
+                onChange={(e) => setAutoFollow(e.target.checked)}
+                className="rounded border-neutral-700 bg-neutral-950 text-red-500 focus:ring-0 w-3.5 h-3.5"
+              />
+              Auto-Follow
+            </label>
+          </div>
+        )}
 
-      {/* Map Mode Layers Toggles */}
-      <div className="absolute top-4 right-44 z-[1000] flex bg-neutral-900/90 backdrop-blur border border-neutral-800 rounded-lg p-0.5 shadow-lg select-none pointer-events-auto h-9 items-center">
-        <button
-          type="button"
-          onClick={() => setMapType("roadmap")}
-          className={`px-3 py-1.5 text-[9px] font-extrabold rounded-md uppercase font-mono transition-all ${
-            mapType === "roadmap"
-              ? "bg-primary text-on-primary shadow-sm"
-              : "text-neutral-400 hover:text-neutral-200"
-          }`}
-        >
-          Map
-        </button>
-        <button
-          type="button"
-          onClick={() => setMapType("satellite")}
-          className={`px-3 py-1.5 text-[9px] font-extrabold rounded-md uppercase font-mono transition-all ${
-            mapType === "satellite"
-              ? "bg-primary text-on-primary shadow-sm"
-              : "text-neutral-400 hover:text-neutral-200"
-          }`}
-        >
-          Satellite
-        </button>
-      </div>
+        {/* Map Layer Mode (Segmented Pill) */}
+        <div className="flex bg-[#141414]/90 backdrop-blur-md border border-white/10 rounded-xl p-1 shadow-xl items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setMapType("roadmap")}
+            className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+              mapType === "roadmap"
+                ? "bg-red-600 text-white shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapType("satellite")}
+            className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+              mapType === "satellite"
+                ? "bg-red-600 text-white shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Satellite
+          </button>
+        </div>
 
-      {/* Floating Theme Toggle Widget */}
-      <div className="absolute top-4 right-4 z-[1000] flex bg-neutral-900/90 backdrop-blur border border-neutral-800 rounded-lg p-0.5 shadow-lg select-none pointer-events-auto">
-        <button
-          type="button"
-          onClick={() => setTheme("dark")}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-            theme === "dark"
-              ? "bg-neutral-800 text-white shadow-sm"
-              : "text-neutral-400 hover:text-neutral-200"
-          }`}
-        >
-          <Sun size={14} />
-          Dark
-        </button>
-        <button
-          type="button"
-          onClick={() => setTheme("light")}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-            theme === "light"
-              ? "bg-white text-neutral-900 shadow-sm"
-              : "text-neutral-400 hover:text-neutral-200"
-          }`}
-        >
-          <Sun size={14} />
-          Light
-        </button>
+        {/* Theme Toggle (Segmented Pill) */}
+        <div className="flex bg-[#141414]/90 backdrop-blur-md border border-white/10 rounded-xl p-1 shadow-xl items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setTheme("dark")}
+            className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
+              theme === "dark"
+                ? "bg-neutral-800 text-white shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Moon size={11} />
+            Dark
+          </button>
+          <button
+            type="button"
+            onClick={() => setTheme("light")}
+            className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
+              theme === "light"
+                ? "bg-white text-neutral-900 shadow-sm"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Sun size={11} />
+            Light
+          </button>
+        </div>
       </div>
 
       {/* Google Map Container Ref */}
-      <div ref={mapRef} className="w-full h-full rounded-lg" style={{ minHeight: "350px" }} />
+      <div ref={mapRef} className="w-full h-full" style={{ minHeight: "350px" }} />
+      {mapLoadError && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/90 p-6 text-center text-sm text-red-200" role="alert">
+          Map unavailable: {mapLoadError}
+        </div>
+      )}
     </div>
   );
 }

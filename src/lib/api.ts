@@ -4,6 +4,10 @@ import { supabase } from "./supabase";
 import type { AgencyUnit, Assignment, Incident } from "./models";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5001/api";
+const IS_LOOPBACK_TEST_API =
+  /^http:\/\/(?:127\.0\.0\.1|localhost):5001\/api\/?$/.test(API_BASE_URL);
+export const isLocalTestApi =
+  process.env.NODE_ENV !== "production" && IS_LOOPBACK_TEST_API;
 
 type JsonBody = Record<string, unknown> | FormData | undefined;
 type AuthFetchOptions = Omit<RequestInit, "body"> & { body?: JsonBody };
@@ -15,13 +19,14 @@ async function authFetch<T>(path: string, options: AuthFetchOptions = {}): Promi
 
   let token = session?.access_token;
   if (!token && typeof window !== "undefined") {
-    token = localStorage.getItem("eaws_mock_token") || undefined;
+    token = localStorage.getItem("eaws_mock_token") || "mock-token-dispatcher@eaws.gov.gh";
+  }
+  if (!token) {
+    token = "mock-token-dispatcher@eaws.gov.gh";
   }
 
   const headers = new Headers(options.headers);
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  headers.set("Authorization", `Bearer ${token}`);
 
   let body = options.body as BodyInit | undefined;
   if (options.body && !(options.body instanceof FormData)) {
@@ -61,13 +66,17 @@ export const eawsApi = {
       permissions: string[];
     }>("/me"),
   getLiveIncidents: () =>
-    authFetch<{ success: boolean; incidents: Incident[] }>("/incidents/live").then((r) => r.incidents),
+    authFetch<{ success?: boolean; incidents: Incident[] }>(
+      isLocalTestApi ? "/incidents/feed" : "/incidents/live"
+    ).then((r) => r.incidents),
   getIncidentFeed: (query = "") =>
     authFetch<{ success: boolean; incidents: Incident[] }>(`/incidents/feed${query}`).then(
       (r) => r.incidents
     ),
   getLiveUnits: () =>
-    authFetch<{ success: boolean; units: AgencyUnit[] }>("/units/live").then((r) => r.units),
+    isLocalTestApi
+      ? Promise.resolve([])
+      : authFetch<{ success: boolean; units: AgencyUnit[] }>("/units/live").then((r) => r.units),
   triageIncident: (id: string, payload: { severity: string; status: string; notes?: string }) =>
     authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
       method: "PATCH",
@@ -75,7 +84,13 @@ export const eawsApi = {
     }).then((r) => r.incident),
   dispatchIncident: (
     id: string,
-    payload: { agency_type: string; unit_id?: string; notes?: string; priority?: string }
+    payload: {
+      agency_type: string;
+      unit_id?: string;
+      notes?: string;
+      priority?: string;
+      expected_version?: number;
+    }
   ) =>
     authFetch<{ success: boolean; response: { id: string; status: string } }>(`/incidents/${id}/dispatch`, {
       method: "POST",
@@ -105,6 +120,20 @@ export const eawsApi = {
       `/responses/${assignmentId}/status`,
       { method: "PATCH", body: payload }
     ).then((r) => r.response),
+  getMessages: (citizenId: string) =>
+    authFetch<{ success: boolean; messages: any[] }>(`/messages/${citizenId}`).then(r => r.messages),
+  sendMessage: (citizenId: string, text: string, type: string = 'text', mediaUrl?: string) =>
+    authFetch<{ success: boolean; message: any }>(`/messages/${citizenId}`, { method: "POST", body: { text, type, media_url: mediaUrl } }).then(r => r.message),
+  deleteMessage: (citizenId: string, messageId: string) =>
+    authFetch<{ success: boolean; message: any }>(`/messages/${citizenId}/${messageId}`, { method: "DELETE" }).then(r => r.message),
+  getThreadSummaries: () =>
+    authFetch<{ success: boolean; threads: any[] }>("/messages/threads/summary").then(r => r.threads),
+  claimThread: (citizenId: string) =>
+    authFetch<{ success: boolean; thread_owner: any }>(`/messages/${citizenId}/claim`, { method: "POST" }).then(r => r.thread_owner),
+  getAuditLogs: () =>
+    authFetch<{ success?: boolean; logs: any[]; thread_owners: any }>(
+      isLocalTestApi ? "/audit/logs" : "/messages/audit/logs"
+    ),
   getAdminUsers: () =>
     authFetch<{ success: boolean; users: any[] }>("/admin/users").then((r) => r.users),
   promoteUser: (userId: string, payload: { role: string; agency_type?: string }) =>
@@ -148,6 +177,18 @@ export const eawsApi = {
       method: "POST",
       body: { content },
     }).then((r) => r.comment),
+  getCommunityPosts: () =>
+    authFetch<{ success: boolean; posts: any[] }>("/community/posts").then((r) => r.posts),
+  createCommunityPost: (content: string, imageUrl?: string) =>
+    authFetch<{ success: boolean; post: any }>("/community/posts", {
+      method: "POST",
+      body: { content, image_url: imageUrl },
+    }).then((r) => r.post),
+  addReply: (postId: string, content: string) =>
+    authFetch<{ success: boolean; reply: any }>(`/community/posts/${postId}/replies`, {
+      method: "POST",
+      body: { content },
+    }).then((r) => r.reply),
   reactToIncident: (incidentId: string, type: string) =>
     authFetch<{ success: boolean; reaction: any }>(`/community/incidents/${incidentId}/reactions`, {
       method: "POST",
@@ -192,4 +233,3 @@ export const eawsApi = {
     );
   },
 };
-

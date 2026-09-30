@@ -1,14 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Clock, MapPin, Activity, Radio, Phone, Send,
-  Shield, Flame, AlertTriangle, Wifi, ChevronRight,
-  Zap, Heart,
+  Shield, Flame, AlertTriangle, Wifi, ChevronRight, X,
+  Zap, Heart, PanelLeftClose, PanelRightClose, PanelRightOpen, ChevronLeft
 } from "lucide-react";
-import { eawsApi } from "@/lib/api";
+import { eawsApi, isLocalTestApi } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { AgencyUnit, Incident } from "@/lib/models";
 import SentinelShell from "@/components/SentinelShell";
@@ -22,51 +22,32 @@ const LiveMap = dynamic(() => import("@/components/Map"), {
   ),
 });
 
-const FALLBACK_INCIDENTS: Incident[] = [
-  {
-    id: "PT-8829-X", category: "MEDICAL", severity: "CRITICAL", status: "pending",
-    title: "Medical Emergency — D. Harrison",
-    description: "Severe penetrating trauma to abdominal quadrant 3. Active arterial bleed reported by bystander. Patient is drifting in and out of consciousness.",
-    is_anonymous: false, is_verified: true,
-    location_name: "Liberation Road, Accra",
-    latitude: 5.6037, longitude: -0.187,
-    likes_count: 0, comments_count: 0,
-    created_at: new Date().toISOString(),
-    metadata: { vitals_hr: "128", vitals_spo2: "91", ai_confidence: 94, ai_risk: "Hypovolemic Shock Risk", trauma_score: 14 },
-  },
-  {
-    id: "PT-7714-A", category: "CRIME", severity: "WARNING", status: "verified",
-    title: "Suspicious Activity Alert",
-    description: "Armed robbery reported near Osu Oxford Street. Suspect fled on motorcycle.",
-    is_anonymous: false, is_verified: true,
-    location_name: "Osu, Oxford Street",
-    latitude: 5.5507, longitude: -0.1702,
-    likes_count: 0, comments_count: 0,
-    created_at: new Date(Date.now() - 8 * 60000).toISOString(),
-  },
-  {
-    id: "PT-6402-K", category: "DISASTER", severity: "MEDIUM", status: "assigned",
-    title: "Earthquake Preparedness Broadcast",
-    description: "Tremor of 3.1 magnitude detected. Advising citizens to follow evacuation protocols.",
-    is_anonymous: false, is_verified: true,
-    location_name: "East Legon, Accra",
-    latitude: 5.636, longitude: -0.155,
-    likes_count: 0, comments_count: 0,
-    created_at: new Date(Date.now() - 14 * 60000).toISOString(),
-  },
-];
-
-const FALLBACK_UNITS: AgencyUnit[] = [
-  { id: "police-1", agency_type: "police", name: "Patrol Unit 4", status: "available", latitude: 5.59, longitude: -0.17 },
-  { id: "fire-1", agency_type: "fire", name: "Engine 12", status: "available", latitude: 5.57, longitude: -0.21 },
-  { id: "ambulance-1", agency_type: "ambulance", name: "Ambulance Alpha", status: "en_route", latitude: 5.61, longitude: -0.19 },
-];
-
 function timeAgo(iso: string) {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
   return `${Math.round(mins / 60)}h ago`;
+}
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  warning: 3,
+  medium: 2,
+  low: 1,
+  "pending triage": 0,
+};
+
+function sortIncidentsByPriority(items: Incident[]) {
+  return [...items].sort((a, b) => {
+    const aIsSos = a.category.toLowerCase() === "sos";
+    const bIsSos = b.category.toLowerCase() === "sos";
+    if (aIsSos !== bIsSos) return aIsSos ? -1 : 1;
+    const severityDifference =
+      (SEVERITY_ORDER[String(b.severity).toLowerCase()] ?? 0) -
+      (SEVERITY_ORDER[String(a.severity).toLowerCase()] ?? 0);
+    return severityDifference || Date.parse(a.created_at) - Date.parse(b.created_at);
+  });
 }
 
 const PRIORITY_COLOR: Record<string, string> = {
@@ -79,14 +60,17 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [incidents, setIncidents] = useState<Incident[]>(FALLBACK_INCIDENTS);
-  const [units, setUnits] = useState<AgencyUnit[]>(FALLBACK_UNITS);
-  const [apiStatus, setApiStatus] = useState<"live" | "fallback">("fallback");
-  const [selectedIncident, setSelectedIncident] = useState<Incident>(FALLBACK_INCIDENTS[0]);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [units, setUnits] = useState<AgencyUnit[]>([]);
+  const [apiStatus, setApiStatus] = useState<"live" | "unavailable">("unavailable");
+  const [apiError, setApiError] = useState<string | null>(null);
+  const feedSnapshotRef = useRef("");
+  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("all");
   const [isDispatching, setIsDispatching] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "info" | "error" } | null>(null);
-  const [systemHealth, setSystemHealth] = useState({ connectivity: 98, locationAccuracy: "±3m", smsFallback: "Active" });
 
   // Modals state
   const [isTeleMedActive, setIsTeleMedActive] = useState(false);
@@ -104,21 +88,41 @@ export default function DashboardPage() {
         eawsApi.getLiveIncidents(),
         eawsApi.getLiveUnits(),
       ]);
-      if (liveIncidents?.length) {
-        setIncidents(liveIncidents);
-        setSelectedIncident((prev) => liveIncidents.find((i) => i.id === prev.id) || liveIncidents[0]);
+      const prioritizedIncidents = sortIncidentsByPriority(liveIncidents ?? []);
+      const feedSnapshot = JSON.stringify(prioritizedIncidents);
+      if (feedSnapshot !== feedSnapshotRef.current) {
+        feedSnapshotRef.current = feedSnapshot;
+        setIncidents(prioritizedIncidents);
+        setSelectedIncident((prev) =>
+          prioritizedIncidents.find((incident) => incident.id === prev?.id) ??
+          prioritizedIncidents[0] ??
+          null
+        );
       }
-      if (liveUnits?.length) setUnits(liveUnits);
+      setUnits((previousUnits) =>
+        previousUnits.length === 0 && (liveUnits ?? []).length === 0
+          ? previousUnits
+          : liveUnits ?? []
+      );
       setApiStatus("live");
-    } catch {
-      setApiStatus("fallback");
+      setApiError(null);
+    } catch (error) {
+      setApiStatus("unavailable");
+      setApiError(error instanceof Error ? error.message : "Unknown API error");
+      console.error("Dashboard feed unavailable:", error);
+      if (isLocalTestApi) {
+        feedSnapshotRef.current = "";
+        setIncidents([]);
+        setUnits([]);
+        setSelectedIncident(null);
+      }
     }
   }, []);
 
   useEffect(() => {
     loadData();
-    const iv = setInterval(loadData, 8000);
-    // Supabase Realtime — incidents table
+    const iv = setInterval(loadData, isLocalTestApi ? 1000 : 8000);
+    if (isLocalTestApi) return () => clearInterval(iv);
     const channel = supabase
       .channel("dashboard-incidents")
       .on("postgres_changes" as any, { event: "*", schema: "public", table: "incidents" }, loadData)
@@ -131,7 +135,11 @@ export default function DashboardPage() {
     if (!target) return;
     setIsDispatching(true);
     try {
-      await eawsApi.dispatchIncident(target.id, { agency_type: agencyType, priority: target.severity.toLowerCase() });
+      await eawsApi.dispatchIncident(target.id, {
+        agency_type: agencyType,
+        priority: target.severity.toLowerCase(),
+        expected_version: target.version,
+      });
       setDispatchSuccess(`${agencyType.toUpperCase()} unit dispatched to ${target.location_name || "incident"}!`);
       showToast(`✅ ${agencyType.toUpperCase()} dispatched to ${target.location_name || "incident"}`, "success");
       setTimeout(() => setDispatchSuccess(null), 3000);
@@ -157,27 +165,84 @@ export default function DashboardPage() {
     return `${m}:${s}`;
   }
 
-  const meta = (selectedIncident as any)?.metadata || {};
-  const topIncident = incidents[0];
+  const visibleIncidents = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    return incidents.filter((incident) => {
+      const severity = String(incident.severity).toLocaleLowerCase();
+      const normalizedSeverity = severity === "warning" ? "high" : severity;
+      const matchesSeverity = severityFilter === "all" || normalizedSeverity === severityFilter;
+      const searchableText = [
+        incident.id,
+        incident.title,
+        incident.description,
+        incident.category,
+        incident.location_name,
+        incident.user_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase();
+      return matchesSeverity && (!query || searchableText.includes(query));
+    });
+  }, [incidents, searchQuery, severityFilter]);
+  const topIncident =
+    visibleIncidents.find((incident) => incident.id === selectedIncident?.id) ??
+    visibleIncidents[0] ??
+    null;
+  const meta = topIncident?.metadata || {};
+  const testDispatchAlreadyRecorded =
+    isLocalTestApi &&
+    Boolean(
+      topIncident?.dispatch_unit ||
+        ["dispatched", "en_route", "on_scene", "resolved", "dismissed", "retracted", "merged"].includes(
+          topIncident?.status ?? "",
+        ),
+    );
+  const dispatchDisabled =
+    isDispatching || !topIncident || testDispatchAlreadyRecorded;
+  const mapIncidents = useMemo(() => visibleIncidents.slice(0, 100), [visibleIncidents]);
+
+  const [isLeftOpen, setIsLeftOpen] = useState(true);
+  const [isRightOpen, setIsRightOpen] = useState(true);
 
   return (
     <SentinelShell
       title="Sentinel Command"
       subtitle="Monitor citizen signals, coordinate dispatch, and broadcast updates back to the app."
+      searchValue={searchQuery}
+      onSearchChange={setSearchQuery}
     >
       <div className="flex h-full overflow-hidden relative">
 
         {/* ── LEFT PANEL: Priority Incident Card ── */}
-        <div className="w-[280px] min-w-[280px] h-full overflow-y-auto bg-[#0e0e0e] border-r border-neutral-900 flex flex-col gap-0">
+        <div
+          className="h-full overflow-y-auto bg-[#0e0e0e] border-r border-neutral-900 flex flex-col gap-0 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+          style={{ width: isLeftOpen ? "280px" : "0px", minWidth: isLeftOpen ? "280px" : "0px", opacity: isLeftOpen ? 1 : 0, overflow: isLeftOpen ? "auto" : "hidden" }}
+        >
 
           {/* Priority header */}
-          <div className="px-4 pt-4 pb-3 border-b border-neutral-900">
-            <p className="text-[8px] font-bold tracking-[0.2em] text-neutral-600 uppercase mb-1">Priority 1 · Immediate</p>
-            <div className="flex items-center justify-between">
+          <div className="px-4 pt-4 pb-3 border-b border-neutral-900 flex items-center justify-between">
+            <div>
+              <p className="text-[8px] font-bold tracking-[0.2em] text-neutral-500 uppercase mb-0.5">Priority 1 · Immediate</p>
               <h2 className="text-lg font-black text-white font-mono">{topIncident?.id || "—"}</h2>
+            </div>
+            <div className="flex items-center gap-2">
               <span className="text-[9px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded uppercase">
-                {topIncident?.severity || "—"}
+                {topIncident
+                  ? `${String(topIncident.severity).toUpperCase()}${
+                      topIncident.severity_confidence === "unverified" || topIncident.is_verified === false
+                        ? " · UNVERIFIED"
+                        : ""
+                    }`
+                  : "—"}
               </span>
+              <button
+                onClick={() => setIsLeftOpen(false)}
+                title="Slide to Minimize Priority Panel"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 transition-all flex items-center justify-center"
+              >
+                <PanelLeftClose size={14} />
+              </button>
             </div>
           </div>
 
@@ -187,25 +252,13 @@ export default function DashboardPage() {
               <p className="text-[8px] font-bold tracking-widest text-neutral-600 uppercase">Name</p>
               <ChevronRight size={12} className="text-neutral-600" />
             </div>
-            <p className="text-sm font-bold text-white">{topIncident?.title?.split("—")[1]?.trim() || topIncident?.title || "Unknown Citizen"}</p>
+            <p className="text-sm font-bold text-white">
+              {topIncident?.user_name || topIncident?.title?.split("—")[1]?.trim() || topIncident?.title || "Unknown Citizen"}
+            </p>
 
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <div className="bg-neutral-900 rounded-lg p-2.5 text-center">
-                <div className="flex items-center justify-center gap-1 mb-0.5">
-                  <Heart size={9} className="text-red-400" />
-                  <span className="text-[8px] font-bold tracking-widest text-neutral-500 uppercase">HR</span>
-                </div>
-                <p className="text-xl font-black text-white font-mono">{meta.vitals_hr || "—"}</p>
-                <p className="text-[8px] text-neutral-500">BPM</p>
-              </div>
-              <div className="bg-neutral-900 rounded-lg p-2.5 text-center">
-                <div className="flex items-center justify-center gap-1 mb-0.5">
-                  <Activity size={9} className="text-blue-400" />
-                  <span className="text-[8px] font-bold tracking-widest text-neutral-500 uppercase">SpO2</span>
-                </div>
-                <p className="text-xl font-black text-white font-mono">{meta.vitals_spo2 ? `${meta.vitals_spo2}%` : "—"}</p>
-                <p className="text-[8px] text-neutral-500">{meta.vitals_spo2 && parseInt(meta.vitals_spo2) < 95 ? "Low" : "Normal"}</p>
-              </div>
+            <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900 p-3">
+              <p className="text-[10px] font-bold text-neutral-300">Medical data masked</p>
+              <p className="mt-1 text-[9px] text-neutral-500">Authorized reveal and access audit are not connected.</p>
             </div>
           </div>
 
@@ -262,17 +315,28 @@ export default function DashboardPage() {
               <div className="text-[10px] text-green-400 bg-green-500/10 border border-green-500/20 rounded px-2 py-1.5">{dispatchSuccess}</div>
             )}
             <button
-              className="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-2"
+              className={`w-full py-2.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
+                isLocalTestApi
+                  ? "bg-neutral-800 text-neutral-500 cursor-not-allowed"
+                  : "bg-red-600 hover:bg-red-700 text-white"
+              }`}
+              disabled={isLocalTestApi}
+              title={isLocalTestApi ? "Calling is disabled in the local test API" : "Initiate tele-medicine link"}
               onClick={() => setIsTeleMedActive(true)}
             >
-              <Phone size={12} /> Initiate Tele-Med Link
+            <Phone size={12} /> {isLocalTestApi ? "Call unavailable in TEST" : "Initiate Tele-Med Link"}
             </button>
             <button
-              disabled={isDispatching}
-              onClick={() => handleDispatch("police")}
+              disabled={dispatchDisabled}
+              onClick={() => handleDispatch("police", topIncident)}
               className="w-full py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Send size={12} /> Dispatch Unit
+              <Send size={12} />{" "}
+              {testDispatchAlreadyRecorded
+                ? "TEST Dispatch already recorded"
+                : isLocalTestApi
+                  ? "TEST Dispatch Unit"
+                  : "Dispatch Unit"}
             </button>
           </div>
 
@@ -294,11 +358,15 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex gap-1.5">
                   <button
-                    disabled={isDispatching}
+                    disabled={dispatchDisabled}
                     onClick={() => handleDispatch(ag.key)}
                     className={`flex-1 text-[9px] font-bold text-white py-1.5 rounded transition-colors disabled:opacity-50 ${ag.color}`}
                   >
-                    Dispatch {ag.label}
+                    {testDispatchAlreadyRecorded
+                      ? "TEST Dispatch already recorded"
+                      : isLocalTestApi
+                        ? `TEST Dispatch ${ag.label}`
+                        : `Dispatch ${ag.label}`}
                   </button>
                   <button
                     onClick={() => router.push(ag.portal)}
@@ -313,67 +381,153 @@ export default function DashboardPage() {
         </div>
 
         {/* ── CENTER: Full Map ── */}
-        <div className="flex-1 relative">
-          <LiveMap incidents={incidents} units={units} />
+        <div className="flex-1 relative min-w-0">
+          <LiveMap
+            incidents={mapIncidents}
+            units={units}
+            onSelectIncident={(id) => {
+              const found = incidents.find((inc) => inc.id === id);
+              if (found) {
+                setSelectedIncident(found);
+                setIsLeftOpen(true);
+              }
+            }}
+          />
 
-          {/* API status overlay */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm border border-neutral-800 rounded-full px-3 py-1.5">
-            <span className="text-[8px] font-bold text-neutral-300">Accra Metro · Live Feed</span>
-            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${apiStatus === "live" ? "bg-green-500" : "bg-yellow-500"}`} />
-          </div>
+          {/* Floating re-open button for Dispatch Queue when closed */}
+          {!isRightOpen && (
+            <button
+              onClick={() => setIsRightOpen(true)}
+              className="absolute right-4 bottom-8 z-[1000] flex items-center gap-2.5 bg-[#141414]/95 hover:bg-[#1c1c1e] border border-red-500/70 hover:border-red-500 text-white text-[12px] font-bold px-4 py-2.5 rounded-2xl transition-all shadow-[0_0_25px_rgba(239,68,68,0.3)] hover:shadow-[0_0_30px_rgba(239,68,68,0.5)] backdrop-blur-md group"
+              title="Open Dispatch Queue"
+            >
+              <PanelRightOpen size={16} className="text-red-400 group-hover:translate-x-0.5 transition-transform" />
+              <span>Dispatch Queue</span>
+              {visibleIncidents.length > 0 && (
+                <span className="bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full min-w-[20px] text-center shadow">
+                  {visibleIncidents.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* ── RIGHT PANEL: Dispatch Queue + System Health ── */}
-        <div className="w-[280px] min-w-[280px] h-full overflow-y-auto bg-[#0e0e0e] border-l border-neutral-900 flex flex-col">
+        <div
+          className="h-full bg-[#0e0e0e] border-l border-neutral-900 flex flex-col transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+          style={{ width: isRightOpen ? "280px" : "0px", minWidth: isRightOpen ? "280px" : "0px", opacity: isRightOpen ? 1 : 0, overflow: isRightOpen ? "auto" : "hidden" }}
+        >
 
           {/* Dispatch Queue */}
           <div className="px-4 pt-4 pb-2 border-b border-neutral-900">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[10px] font-bold tracking-widest text-neutral-400 uppercase">Dispatch Queue</p>
-              <span className="text-[9px] font-bold text-neutral-500 bg-neutral-900 border border-neutral-800 rounded px-1.5 py-0.5">
-                {incidents.length} Pending
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-bold text-neutral-500 bg-neutral-900 border border-neutral-800 rounded px-1.5 py-0.5">
+                  {visibleIncidents.length} of {incidents.length} reports
+                </span>
+                <button
+                  onClick={() => setIsRightOpen(false)}
+                  title="Slide to Minimize Dispatch Queue"
+                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 transition-all flex items-center justify-center"
+                >
+                  <PanelRightClose size={14} />
+                </button>
+              </div>
             </div>
+            <label className="block mb-3">
+              <span className="sr-only">Filter reports by severity</span>
+              <select
+                aria-label="Filter reports by severity"
+                value={severityFilter}
+                onChange={(event) => setSeverityFilter(event.target.value)}
+                className="w-full rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-[10px] text-neutral-200"
+              >
+                <option value="all">All priorities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
 
             <div className="space-y-2">
-              {incidents.slice(0, 4).map((inc) => (
+              {visibleIncidents.slice(0, 4).map((inc) => (
                 <div
                   key={inc.id}
-                  onClick={() => setSelectedIncident(inc)}
+                  onClick={() => {
+                    setSelectedIncident(inc);
+                    setIsLeftOpen(true);
+                  }}
                   className={`rounded-lg border p-3 cursor-pointer transition-all hover:border-neutral-700 ${
                     selectedIncident?.id === inc.id ? "border-red-600/50 bg-red-500/5" : "border-neutral-800 bg-neutral-900/50"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[9px] font-bold text-neutral-500 uppercase mb-0.5">{inc.severity}</p>
+                      <p className="text-[9px] font-bold text-neutral-500 uppercase mb-0.5">
+                        {String(inc.severity).toUpperCase()}
+                        {inc.severity_confidence === "unverified" || inc.is_verified === false
+                          ? " · UNVERIFIED"
+                          : ""}
+                      </p>
                       <p className="text-[11px] font-semibold text-white leading-tight truncate">{inc.title}</p>
                       <p className="text-[9px] text-neutral-500 flex items-center gap-1 mt-0.5">
-                        <MapPin size={8} /> {inc.location_name}
+                        <MapPin size={8} /> {inc.location_name || "Location unavailable"}
+                      </p>
+                      <p className="text-[9px] text-neutral-500 mt-1">
+                        {inc.status.replaceAll("_", " ")} · {inc.operator_name || inc.assigned_to || "Unassigned"} · {timeAgo(inc.created_at)}
                       </p>
                     </div>
-                    <span className={`shrink-0 text-[8px] font-bold border rounded px-1.5 py-0.5 ${PRIORITY_COLOR[inc.severity] || PRIORITY_COLOR["LOW"]}`}>
-                      {inc.severity === "CRITICAL" ? "CRITICAL" : inc.severity === "WARNING" ? "HIGH" : "MED"}
+                    <span className={`shrink-0 text-[8px] font-bold border rounded px-1.5 py-0.5 ${PRIORITY_COLOR[String(inc.severity).toUpperCase()] || PRIORITY_COLOR["LOW"]}`}>
+                      {String(inc.severity).toUpperCase() === "CRITICAL"
+                        ? "CRITICAL"
+                        : ["WARNING", "HIGH"].includes(String(inc.severity).toUpperCase())
+                          ? "HIGH"
+                          : ["LOW", "MEDIUM"].includes(String(inc.severity).toUpperCase())
+                            ? String(inc.severity).toUpperCase()
+                            : "TRIAGE"}
                     </span>
                   </div>
 
                   <div className="flex gap-1.5 mt-2">
                     <button
-                      onClick={(e) => { e.stopPropagation(); setSelectedIncident(inc); handleDispatch("police", inc); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedIncident(inc);
+                        setIsLeftOpen(true);
+                        handleDispatch("police", inc);
+                      }}
                       disabled={isDispatching}
                       className="flex-1 text-[9px] font-bold bg-red-600 hover:bg-red-700 text-white py-1 rounded transition-colors disabled:opacity-50"
                     >
-                      Dispatch
+                      {isLocalTestApi ? "TEST Dispatch" : "Dispatch"}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setSelectedIncident(inc); showToast(`📲 Alert sent to ${inc.location_name || 'field units'} via SMS`, 'info'); }}
-                      className="flex-1 text-[9px] font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 py-1 rounded transition-colors"
+                    disabled
+                    title="Citizen messaging is not connected to this dashboard"
+                    onClick={(e) => { e.stopPropagation(); showToast("Messaging service is not connected.", "error"); }}
+                    className="flex-1 text-[9px] font-bold bg-neutral-800 text-neutral-500 py-1 rounded transition-colors disabled:cursor-not-allowed"
                     >
-                      Message App
+                    Messaging unavailable
                     </button>
                   </div>
                 </div>
               ))}
+
+              {visibleIncidents.length === 0 && (
+                <p className="text-[10px] text-neutral-500 py-3" role="status">
+                  {incidents.length > 0
+                    ? "No reports match the current search and priority filters."
+                    : apiStatus === "live"
+                    ? isLocalTestApi
+                      ? "No reports in the test feed."
+                      : "The configured API returned no reports."
+                    : isLocalTestApi
+                      ? "Test feed unavailable; no sample incidents are shown."
+                      : "Configured API unavailable; sample incidents are not shown."}
+                </p>
+              )}
             </div>
           </div>
 
@@ -381,35 +535,48 @@ export default function DashboardPage() {
           <div className="px-4 py-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[10px] font-bold tracking-widest text-neutral-400 uppercase">System Health</p>
-              <span className="text-[9px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Stable</span>
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                isLocalTestApi
+                  ? "text-yellow-300 bg-yellow-500/10 border border-yellow-500/20"
+                  : "text-neutral-400 bg-neutral-500/10 border border-neutral-500/20"
+              }`}>
+                {isLocalTestApi ? "TEST ONLY" : "Unverified"}
+              </span>
             </div>
-            <p className="text-[9px] text-neutral-600 mb-3">Connectivity and fallback status</p>
+            <p className="text-[9px] text-neutral-600 mb-3">
+            {isLocalTestApi ? "Local test bench · no real dispatch" : "Connectivity and fallback status"}
+            </p>
 
             <div className="space-y-3">
-              {[
-                { label: "App connectivity", value: `${systemHealth.connectivity}%`, pct: systemHealth.connectivity, color: "bg-red-500" },
-                { label: "Location accuracy", value: systemHealth.locationAccuracy, pct: 95, color: "bg-blue-500" },
-              ].map((h) => (
-                <div key={h.label}>
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-neutral-400">{h.label}</span>
-                    <span className="text-neutral-300 font-mono font-bold">{h.value}</span>
-                  </div>
-                  <div className="h-1 rounded-full bg-neutral-800">
-                    <div className={`h-1 rounded-full ${h.color}`} style={{ width: `${h.pct}%` }} />
-                  </div>
-                </div>
-              ))}
-              <div className="flex justify-between text-[10px] pt-1 border-t border-neutral-900">
-                <span className="text-neutral-400">SMS fallback</span>
-                <span className="text-green-400 font-bold">{systemHealth.smsFallback}</span>
+            <div className="flex justify-between text-[10px]">
+              <span className="text-neutral-400">Test API</span>
+              <span className={`font-bold ${apiStatus === "live" ? "text-green-400" : "text-red-400"}`}>
+                {apiStatus === "live" ? "Connected" : "Unavailable"}
+              </span>
+            </div>
+            <div className="flex justify-between text-[10px]">
+              <span className="text-neutral-400">Location accuracy</span>
+              <span className="text-neutral-300 font-mono font-bold">Per report / unknown</span>
               </div>
-              <div className="flex justify-between text-[10px]">
-                <span className="text-neutral-400">API status</span>
-                <span className={`font-bold ${apiStatus === "live" ? "text-green-400" : "text-yellow-400"}`}>
-                  {apiStatus === "live" ? "Live" : "Demo"}
-                </span>
-              </div>
+            <div className="flex justify-between text-[10px]">
+              <span className="text-neutral-400">Realtime / push</span>
+              <span className="text-yellow-400 font-bold">Not connected</span>
+            </div>
+            <div className="flex justify-between text-[10px] pt-1 border-t border-neutral-900">
+              <span className="text-neutral-400">SMS fallback</span>
+              <span className="text-yellow-400 font-bold">Not connected</span>
+            </div>
+            <div className="flex justify-between text-[10px]">
+              <span className="text-neutral-400">Feed source</span>
+              <span className={`font-bold ${apiStatus === "live" ? "text-green-400" : "text-red-400"}`}>
+                {apiStatus === "live" ? (isLocalTestApi ? "TEST API" : "Configured API") : "Unavailable"}
+              </span>
+            </div>
+            {apiError && (
+              <p className="text-[9px] text-red-300 break-words" role="status">
+                {apiError}
+              </p>
+            )}
             </div>
           </div>
         </div>
@@ -493,7 +660,7 @@ export default function DashboardPage() {
                   {(topIncident?.title?.split("—")[1]?.trim() || "UC")[0]}
                 </div>
                 <div>
-                  <h2 className="text-white font-bold text-lg">{topIncident?.title?.split("—")[1]?.trim() || topIncident?.title || "Unknown Citizen"}</h2>
+                  <h2 className="text-white font-bold text-lg">{topIncident?.user_name || "Unknown Citizen"}</h2>
                   <p className="text-neutral-400 text-sm">ID: {topIncident?.user_id?.substring(0,8) || "ANON-8472"}</p>
                 </div>
               </div>
@@ -501,20 +668,20 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
                   <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Medical History</p>
-                  <p className="text-neutral-300 text-sm">Hypertension (Diagnosed 2021). No known drug allergies.</p>
+                  <p className="text-amber-300 text-sm">Masked. Authorized reveal and access audit are not connected.</p>
                 </div>
                 <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
                   <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Emergency Contacts</p>
-                  <p className="text-neutral-300 text-sm">Wife: +233 55 123 4567</p>
+                  <p className="text-neutral-400 text-sm">Contact data is not available from the incident feed.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Blood Type</p>
-                    <p className="text-red-400 font-bold text-lg">O+</p>
+                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Medical Details</p>
+                    <p className="text-amber-300 font-bold text-sm">Masked</p>
                   </div>
                   <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
                     <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Status</p>
-                    <p className="text-green-400 font-bold text-lg">Verified</p>
+                    <p className="text-neutral-300 font-bold text-sm">{topIncident?.severity_confidence === "verified" ? "Verified" : "Unverified"}</p>
                   </div>
                 </div>
               </div>

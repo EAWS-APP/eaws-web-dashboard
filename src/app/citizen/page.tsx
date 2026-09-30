@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { eawsApi, isLocalTestApi } from "@/lib/api";
 import SentinelShell from "@/components/SentinelShell";
 import {
   Phone, MessageSquare, ChevronRight, Smartphone, Battery,
@@ -168,6 +169,9 @@ function CitizenProfileContent() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const [activeCitizenId, setActiveCitizenId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!citizenId) return;
@@ -184,6 +188,7 @@ function CitizenProfileContent() {
       const matched = MOCK_PROFILES[mockKey];
       setProfile(matched);
       setMessages(matched.initial_messages || []);
+      setActiveCitizenId(mockKey);
     }
 
     // Try fetching live profile from Supabase
@@ -191,6 +196,7 @@ function CitizenProfileContent() {
       try {
         const { data } = await supabase.from("profiles").select("*").eq("user_id", citizenId).single();
         if (data) {
+          setActiveCitizenId(citizenId);
           setProfile((prev: any) => ({
             ...prev,
             ...data,
@@ -203,6 +209,26 @@ function CitizenProfileContent() {
     }
     load();
   }, [citizenId]);
+
+  // Load and poll messages when chat is open
+  useEffect(() => {
+    if (!isChatOpen || !activeCitizenId) return;
+    const fetchMsgs = () => {
+      eawsApi.getMessages(activeCitizenId).then(msgs => {
+        if (msgs.length > 0) setMessages(msgs);
+      }).catch(() => {});
+    };
+    fetchMsgs();
+    const interval = setInterval(fetchMsgs, 5000);
+    return () => clearInterval(interval);
+  }, [isChatOpen, activeCitizenId]);
+
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    if (isChatOpen && chatBottomRef.current) {
+      chatBottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isChatOpen]);
 
   const p = profile;
 
@@ -279,7 +305,11 @@ function CitizenProfileContent() {
                         <p className="text-[12px] font-semibold text-white">{c.name}</p>
                         <p className="text-[10px] text-neutral-500 mt-0.5">{c.relation}</p>
                       </div>
-                      <a href={`tel:${c.phone}`} className="text-[11px] font-mono text-neutral-400 hover:text-white transition-colors">{c.phone}</a>
+                      {isLocalTestApi ? (
+                        <span className="text-[10px] text-amber-300">Calls disabled in TEST</span>
+                      ) : (
+                        <a href={`tel:${c.phone}`} className="text-[11px] font-mono text-neutral-400 hover:text-white transition-colors">{c.phone}</a>
+                      )}
                     </div>
                   )) || <div className="text-[11px] text-neutral-600 italic py-2">No contacts registered</div>}
                 </div>
@@ -287,12 +317,18 @@ function CitizenProfileContent() {
 
               {/* action buttons */}
               <div className="flex gap-2 mt-auto">
-                <button onClick={() => setIsChatOpen(true)} className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 text-white text-[11px] font-bold transition-all duration-150 flex items-center justify-center gap-2 shadow-lg shadow-red-900/30">
-                  <MessageSquare size={13} /> Message via App
+                <button onClick={() => setIsChatOpen(true)} disabled={isLocalTestApi} title={isLocalTestApi ? "Citizen messaging is unavailable in TEST mode" : undefined} className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 text-white text-[11px] font-bold transition-all duration-150 flex items-center justify-center gap-2 shadow-lg shadow-red-900/30 disabled:cursor-not-allowed disabled:opacity-50">
+                  <MessageSquare size={13} /> {isLocalTestApi ? "Messaging unavailable" : "Message via App"}
                 </button>
-                <a href={`tel:${p.phone}`} className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] hover:bg-[#252525] border border-white/[0.08] text-neutral-300 text-[11px] font-bold transition-all duration-150 flex items-center justify-center gap-2">
-                  <Phone size={13} /> Call Contact
-                </a>
+                {isLocalTestApi ? (
+                  <button disabled title="Calls are disabled in TEST mode" className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] border border-white/[0.08] text-amber-300 text-[10px] font-bold disabled:cursor-not-allowed">
+                    <Phone size={13} /> Calls disabled in TEST
+                  </button>
+                ) : (
+                  <a href={`tel:${p.phone}`} className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] hover:bg-[#252525] border border-white/[0.08] text-neutral-300 text-[11px] font-bold transition-all duration-150 flex items-center justify-center gap-2">
+                    <Phone size={13} /> Call Contact
+                  </a>
+                )}
               </div>
             </div>
 
@@ -301,13 +337,9 @@ function CitizenProfileContent() {
               {/* Medical Profile */}
               <div className="bg-[#111111] border border-white/[0.06] rounded-2xl p-5">
                 <p className="text-base font-bold text-white tracking-tight mb-0.5">Medical Profile</p>
-                <p className="text-[11px] text-neutral-500 mb-4">Reference data for triage and dispatch decisions</p>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <Field label="Blood Type"          value={p.blood_type} />
-                  <Field label="Allergies"            value={p.allergies} />
-                  <Field label="Chronic Conditions"   value={p.chronic_conditions} />
-                  <Field label="Current Medications"  value={p.current_medications} />
-                </div>
+                <p className="text-[11px] text-amber-300">
+                  Masked. Authorized reveal and access auditing are not connected, so medical details are unavailable.
+                </p>
               </div>
 
               {/* Incident History */}
@@ -471,22 +503,29 @@ function CitizenProfileContent() {
                 )}
               </div>
               {/* Input area */}
-              <form onSubmit={(e) => {
+              <form onSubmit={async (e) => {
                 e.preventDefault();
-                if (!newMessage.trim()) return;
-                setMessages(prev => [...prev, { sender: "operator", text: newMessage, time: "Just now" }]);
+                if (!newMessage.trim() || !activeCitizenId || isSending) return;
+                setIsSending(true);
+                const text = newMessage;
                 setNewMessage("");
-                // Simulated reply from user after 1.5 seconds
-                setTimeout(() => {
-                  setMessages(prev => [...prev, { sender: "citizen", text: "Received, thank you. Standing by for instructions.", time: "Just now" }]);
-                }, 1500);
+                try {
+                  const added = await eawsApi.sendMessage(activeCitizenId, text);
+                  setMessages(prev => [...prev, added]);
+                } catch {
+                  // Optimistic fallback
+                  setMessages(prev => [...prev, { sender: "operator", text, time: "Just now" }]);
+                } finally {
+                  setIsSending(false);
+                }
               }} className="p-4 border-t border-white/[0.08] bg-[#151515] flex gap-2">
                 <input value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a message to citizen..." className="flex-1 bg-[#222] border border-white/[0.06] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/50" />
-                <button type="submit" className="p-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors"><Send size={15} /></button>
+                <button type="submit" disabled={isSending} className="p-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white transition-colors"><Send size={15} /></button>
               </form>
             </div>
           </div>
         )}
+        <div ref={chatBottomRef} />
       </div>
     </SentinelShell>
   );

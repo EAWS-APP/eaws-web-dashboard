@@ -1,5 +1,28 @@
-export type IncidentSeverity = "PENDING TRIAGE" | "CRITICAL" | "WARNING" | "MEDIUM" | "LOW";
-export type IncidentStatus = "pending" | "verified" | "assigned" | "in_progress" | "resolved" | "escalated";
+export type IncidentSeverity =
+  | "PENDING TRIAGE"
+  | "CRITICAL"
+  | "WARNING"
+  | "MEDIUM"
+  | "LOW"
+  | "critical"
+  | "high"
+  | "medium"
+  | "low";
+export type IncidentStatus =
+  | "pending"
+  | "new"
+  | "sent"
+  | "acknowledged"
+  | "assigned"
+  | "dispatched"
+  | "en_route"
+  | "on_scene"
+  | "verified"
+  | "in_progress"
+  | "resolved"
+  | "dismissed"
+  | "retracted"
+  | "escalated";
 
 export type Incident = {
   id: string;
@@ -7,14 +30,20 @@ export type Incident = {
   user_name?: string | null;
   category: string;
   severity: IncidentSeverity;
+  severity_confidence?: "unverified" | "verified" | string;
   status: IncidentStatus;
   title: string;
   description?: string | null;
   is_anonymous: boolean;
   is_verified?: boolean;
-  location_name: string;
-  latitude: number;
-  longitude: number;
+  location_name: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  assigned_to?: string | null;
+  operator_name?: string | null;
+  dispatch_unit?: string | null;
+  eta_minutes?: number | null;
+  version?: number;
   media_url?: string | null;
   media_type?: "image" | "video" | "audio" | null;
   likes_count: number;
@@ -59,4 +88,3 @@ export type Assignment = {
   latitude?: number | null;
   longitude?: number | null;
 };
-
