@@ -6,6 +6,7 @@ import { eawsApi, isLocalTestApi } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Incident } from "@/lib/models";
 import SentinelShell from "@/components/SentinelShell";
+import { insforge } from "@/lib/insforge";
 
 const PRIORITY_TABS = ["Critical", "High", "Medium", "Pending Triage"] as const;
 type PriorityTab = typeof PRIORITY_TABS[number];
@@ -65,10 +66,15 @@ export default function IncidentsPage() {
     loadIncidents();
     const iv = setInterval(loadIncidents, isLocalTestApi ? 1000 : 8000);
     if (isLocalTestApi) return () => clearInterval(iv);
-    const ch = supabase.channel("incidents-page")
-      .on("postgres_changes" as any, { event: "*", schema: "public", table: "incidents" }, loadIncidents)
-      .subscribe();
-    return () => { clearInterval(iv); supabase.removeChannel(ch); };
+    // InsForge Realtime subscription
+    insforge.realtime.connect().then(() => {
+      insforge.realtime.subscribe("incidents");
+      insforge.realtime.on("db:incidents", () => { void loadIncidents(); });
+    });
+    return () => {
+      clearInterval(iv);
+      insforge.realtime.unsubscribe("incidents");
+    };
   }, [loadIncidents]);
 
   const filtered = incidents.filter((incident) =>

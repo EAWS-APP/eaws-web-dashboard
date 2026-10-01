@@ -12,6 +12,7 @@ import { eawsApi, isLocalTestApi } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { AgencyUnit, Incident } from "@/lib/models";
 import SentinelShell from "@/components/SentinelShell";
+import { insforge } from "@/lib/insforge";
 
 const LiveMap = dynamic(() => import("@/components/Map"), {
   ssr: false,
@@ -134,11 +135,15 @@ export default function DashboardPage() {
     loadData();
     const iv = setInterval(loadData, isLocalTestApi ? 1000 : 8000);
     if (isLocalTestApi) return () => clearInterval(iv);
-    const channel = supabase
-      .channel("dashboard-incidents")
-      .on("postgres_changes" as any, { event: "*", schema: "public", table: "incidents" }, loadData)
-      .subscribe();
-    return () => { clearInterval(iv); supabase.removeChannel(channel); };
+    // InsForge Realtime subscription
+    insforge.realtime.connect().then(() => {
+      insforge.realtime.subscribe("incidents");
+      insforge.realtime.on("db:incidents", () => { void loadData(); });
+    });
+    return () => {
+      clearInterval(iv);
+      insforge.realtime.unsubscribe("incidents");
+    };
   }, [loadData]);
 
   async function handleDispatch(agencyType: string, incidentOverride?: typeof selectedIncident) {

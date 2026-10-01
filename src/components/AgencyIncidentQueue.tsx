@@ -6,6 +6,7 @@ import { eawsApi, isLocalTestApi } from "@/lib/api";
 import type { Incident } from "@/lib/models";
 import { supabase } from "@/lib/supabase";
 import SentinelShell from "@/components/SentinelShell";
+import { insforge } from "@/lib/insforge";
 
 type AgencyIncidentQueueProps = {
   agencyType: "fire" | "ambulance";
@@ -80,13 +81,15 @@ export default function AgencyIncidentQueue({
     void Promise.resolve().then(loadIncidents);
     const interval = setInterval(loadIncidents, isLocalTestApi ? 1000 : 8000);
     if (isLocalTestApi) return () => clearInterval(interval);
-    const channel = supabase
-      .channel(`${agencyType}-incident-queue`)
-      .on("postgres_changes" as never, { event: "*", schema: "public", table: "incidents" }, loadIncidents)
-      .subscribe();
+    // InsForge Realtime subscription
+    const channel = `${agencyType}-incident-queue`;
+    insforge.realtime.connect().then(() => {
+      insforge.realtime.subscribe(channel);
+      insforge.realtime.on("db:incidents", () => { void loadIncidents(); });
+    });
     return () => {
       clearInterval(interval);
-      void supabase.removeChannel(channel);
+      insforge.realtime.unsubscribe(channel);
     };
   }, [agencyType, loadIncidents]);
 

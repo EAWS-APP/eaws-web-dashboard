@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { eawsApi, isLocalTestApi } from "@/lib/api";
+import { insforge } from "@/lib/insforge";
 
 const NAV_ITEMS = [
   { id: "map",        label: "Live Map",      icon: Map,           href: "/dashboard" },
@@ -196,11 +197,12 @@ export default function SentinelShell({
       } catch { /* fallback */ }
     }
     fetchCount();
-    const channel = supabase
-      .channel("shell-incident-count")
-      .on("postgres_changes" as any, { event: "*", schema: "public", table: "incidents" }, fetchCount)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    // InsForge Realtime subscription
+    insforge.realtime.connect().then(() => {
+      insforge.realtime.subscribe("shell-incident-count");
+      insforge.realtime.on("db:incidents", () => { void fetchCount(); });
+    });
+    return () => { insforge.realtime.unsubscribe("shell-incident-count"); };
   }, []);
 
   /* ── Global Messages Polling & Notification Toast ── */
