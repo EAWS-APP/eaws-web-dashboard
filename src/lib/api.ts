@@ -1,7 +1,7 @@
 "use client";
 
 import { supabase } from "./supabase";
-import type { AgencyUnit, Assignment, Incident } from "./models";
+import type { AgencyUnit, Assignment, Incident, IncidentMessage } from "./models";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5001/api";
 
@@ -159,11 +159,8 @@ export const eawsApi = {
       method: "POST",
       body: payload,
     }),
-  updateIncident: (id: string, payload: Partial<Incident>) =>
-    authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}`, {
-      method: "PATCH",
-      body: payload,
-    }).then((r) => r.incident),
+  updateIncident: (id: string, payload: Partial<Incident> & { expected_version?: number; action?: string }) => authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}`, { method: "PATCH", body: payload }).then((r) => r.incident),
+  sendIncidentMessage: (incidentId: string, content: string) => authFetch<{ message: IncidentMessage }>(`/incidents/${incidentId}/messages`, { method: "POST", body: { content } }).then((r) => r.message),
   escalateIncident: (id: string, reason?: string) =>
     authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
       method: "PATCH",
