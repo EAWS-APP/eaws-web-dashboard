@@ -519,7 +519,9 @@ export default function DashboardPage() {
                         {message.sender} ·{" "}
                         {message.delivery_state === "fetched_by_citizen_app"
                           ? "Received by citizen app"
-                          : "Saved on TEST server · waiting for app poll"}
+                          : message.delivery_state === "test_only_not_delivered"
+                            ? "TEST only · delivery not verified"
+                            : "Saved on TEST server · waiting for app poll"}
                       </p>
                     </div>
                   ))

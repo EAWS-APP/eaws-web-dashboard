@@ -705,7 +705,7 @@ export default function PortalDashboard({
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      const matched = (data || []).filter(inc => {
+      const matched = (data || []).filter((inc: any) => {
         const meta = inc.metadata || {};
         return meta.patient_name && meta.patient_name.toLowerCase() === name.toLowerCase();
       });
@@ -822,7 +822,7 @@ export default function PortalDashboard({
   };
 
   const renderIncidentsTab = () => {
-    const filteredInc = queue.filter(inc => {
+    const filteredInc = queue.filter((inc: any) => {
       const matchQuery = inc.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          inc.location.toLowerCase().includes(searchQuery.toLowerCase());
       return matchQuery;

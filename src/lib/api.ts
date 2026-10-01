@@ -190,7 +190,13 @@ export const eawsApi = {
     authFetch<{ success: boolean; threads: any[] }>("/messages/threads/summary").then(r => r.threads),
   claimThread: (citizenId: string) =>
     authFetch<{ success: boolean; thread_owner: any }>(`/messages/${citizenId}/claim`, { method: "POST" }).then(r => r.thread_owner),
-  getAuditLogs: async () => { const rows = await ifgFetch<any[]>("/api/database/records/audit_logs?order=created_at.desc&limit=200"); return { logs: rows, thread_owners: {} }; },
+  getAuditLogs: async () => {
+    if (isLocalTestApi) {
+      return authFetch<{ logs: any[]; thread_owners: Record<string, unknown> }>("/audit/logs");
+    }
+    const rows = await ifgFetch<any[]>("/api/database/records/audit_logs?order=created_at.desc&limit=200");
+    return { logs: rows, thread_owners: {} };
+  },
   getAdminUsers: async () => { const rows = await ifgFetch<any[]>("/api/database/records/profiles?limit=200"); return rows; },
   promoteUser: (userId: string, payload: { role: string; agency_type?: string }) =>
     authFetch<{ success: boolean; profile: any }>(`/admin/users/${userId}/promote`, {
