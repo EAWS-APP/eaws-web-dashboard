@@ -4,6 +4,71 @@ import { supabase } from "./supabase";
 import type { AgencyUnit, Assignment, Incident } from "./models";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5001/api";
+
+import { insforge } from "./insforge";
+
+const IFG_BASE = (process.env.NEXT_PUBLIC_INSFORGE_URL || "https://gcj3agx8.us-west.insforge.app");
+const IFG_ANON = process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY || "anon_fe9d1abcef3173c9e111eebe321163961260701c2425c7b6ffa509e80de3c86f";
+
+async function ifgFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${IFG_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${IFG_ANON}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => `HTTP ${res.status}`);
+    throw new Error(msg || `InsForge API error: ${res.status}`);
+  }
+  if (res.status === 204) return undefined as any;
+  return res.json() as Promise<T>;
+}
+
+function mapIfgIncident(row: any): Incident {
+  return {
+    id: row.id,
+    user_id: row.user_id ?? row.reporter_id ?? null,
+    user_name: row.user_name ?? null,
+    category: row.category ?? row.emergency_type ?? "UNKNOWN",
+    severity: row.severity ?? "MEDIUM",
+    status: row.status ?? "pending",
+    title: row.title,
+    description: row.description ?? null,
+    is_anonymous: row.is_anonymous ?? false,
+    is_verified: row.is_verified ?? false,
+    location_name: row.location_name ?? row.address ?? null,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    assigned_to: row.assigned_to ?? null,
+    operator_name: row.operator_name ?? null,
+    dispatch_unit: row.dispatch_unit ?? null,
+    eta_minutes: row.eta_minutes ?? null,
+    media_url: row.media_url ?? null,
+    media_type: row.media_type ?? null,
+    likes_count: row.likes_count ?? 0,
+    comments_count: row.comments_count ?? 0,
+    views_count: row.views_count ?? 0,
+    metadata: row.metadata ?? {},
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function mapIfgUnit(row: any): AgencyUnit {
+  return {
+    id: row.id,
+    agency_type: row.agency_type ?? "police",
+    name: row.name ?? row.call_sign ?? row.id,
+    status: row.status ?? "available",
+    latitude: row.latitude ?? 5.6037,
+    longitude: row.longitude ?? -0.187,
+    last_seen_at: row.last_seen_at ?? row.updated_at,
+  };
+}
+
 const IS_LOOPBACK_TEST_API =
   /^http:\/\/(?:127\.0\.0\.1|localhost):5001\/api\/?$/.test(API_BASE_URL);
 export const isLocalTestApi =
@@ -17,7 +82,11 @@ async function authFetch<T>(path: string, options: AuthFetchOptions = {}): Promi
     data: { session },
   } = await supabase.auth.getSession();
 
-  let token = session?.access_token;
+  let token: string | undefined;
+  if (!isLocalTestApi) {
+    const { data: { session } } = await supabase.auth.getSession();
+    token = session?.access_token;
+  }
   if (!token && typeof window !== "undefined") {
     token = localStorage.getItem("eaws_mock_token") || "mock-token-dispatcher@eaws.gov.gh";
   }
@@ -65,18 +134,12 @@ export const eawsApi = {
       };
       permissions: string[];
     }>("/me"),
-  getLiveIncidents: () =>
-    authFetch<{ success?: boolean; incidents: Incident[] }>(
-      isLocalTestApi ? "/incidents/feed" : "/incidents/live"
-    ).then((r) => r.incidents),
+  getLiveIncidents: async () => { const rows = await ifgFetch<any[]>("/api/database/records/incidents?order=created_at.desc&limit=100"); return rows.map(mapIfgIncident); },
   getIncidentFeed: (query = "") =>
     authFetch<{ success: boolean; incidents: Incident[] }>(`/incidents/feed${query}`).then(
       (r) => r.incidents
     ),
-  getLiveUnits: () =>
-    isLocalTestApi
-      ? Promise.resolve([])
-      : authFetch<{ success: boolean; units: AgencyUnit[] }>("/units/live").then((r) => r.units),
+  getLiveUnits: async () => { const rows = await ifgFetch<any[]>("/api/database/records/agency_units?limit=100"); return rows.map(mapIfgUnit); },
   triageIncident: (id: string, payload: { severity: string; status: string; notes?: string }) =>
     authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
       method: "PATCH",
@@ -130,12 +193,8 @@ export const eawsApi = {
     authFetch<{ success: boolean; threads: any[] }>("/messages/threads/summary").then(r => r.threads),
   claimThread: (citizenId: string) =>
     authFetch<{ success: boolean; thread_owner: any }>(`/messages/${citizenId}/claim`, { method: "POST" }).then(r => r.thread_owner),
-  getAuditLogs: () =>
-    authFetch<{ success?: boolean; logs: any[]; thread_owners: any }>(
-      isLocalTestApi ? "/audit/logs" : "/messages/audit/logs"
-    ),
-  getAdminUsers: () =>
-    authFetch<{ success: boolean; users: any[] }>("/admin/users").then((r) => r.users),
+  getAuditLogs: async () => { const rows = await ifgFetch<any[]>("/api/database/records/audit_logs?order=created_at.desc&limit=200"); return { logs: rows, thread_owners: {} }; },
+  getAdminUsers: async () => { const rows = await ifgFetch<any[]>("/api/database/records/profiles?limit=200"); return rows; },
   promoteUser: (userId: string, payload: { role: string; agency_type?: string }) =>
     authFetch<{ success: boolean; profile: any }>(`/admin/users/${userId}/promote`, {
       method: "PATCH",

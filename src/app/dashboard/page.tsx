@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Clock, MapPin, Activity, Radio, Phone, Send,
-  Shield, Flame, AlertTriangle, Wifi, ChevronRight, X,
+  Shield, Flame, AlertTriangle, Wifi, ChevronRight, X, MessageSquare, CheckCircle2,
   Zap, Heart, PanelLeftClose, PanelRightClose, PanelRightOpen, ChevronLeft
 } from "lucide-react";
 import { eawsApi, isLocalTestApi } from "@/lib/api";
@@ -58,6 +58,9 @@ const PRIORITY_COLOR: Record<string, string> = {
   "PENDING TRIAGE": "text-neutral-400 bg-neutral-500/10 border-neutral-500/30",
 };
 
+const CLEARED_STATUSES = new Set(["resolved", "dismissed", "retracted", "merged"]);
+const TEST_OPERATOR = "TEST Operator Akua Sarpong";
+
 export default function DashboardPage() {
   const router = useRouter();
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -69,7 +72,15 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [isDispatching, setIsDispatching] = useState(false);
+  const [showCleared, setShowCleared] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState<string | null>(null);
+  const [messageDraft, setMessageDraft] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [resolutionOutcome, setResolutionOutcome] = useState("");
+  const [resolutionNotes, setResolutionNotes] = useState("");
+  const [showResolveForm, setShowResolveForm] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [etaDraft, setEtaDraft] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "info" | "error" } | null>(null);
 
   // Modals state
@@ -152,6 +163,112 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleSendCitizenMessage() {
+    const incident = topIncident;
+    const content = messageDraft.trim();
+    if (!incident || !content || isSendingMessage || !isLocalTestApi) return;
+    setIsSendingMessage(true);
+    try {
+      await eawsApi.sendIncidentMessage(incident.id, content);
+      setMessageDraft("");
+      showToast("TEST update saved; the citizen app will receive it on its next poll.", "info");
+      await loadData();
+    } catch (error) {
+      showToast(
+        `Message was not saved: ${error instanceof Error ? error.message : "refresh and retry."}`,
+        "error",
+      );
+    } finally {
+      setIsSendingMessage(false);
+    }
+  }
+
+  async function handleMarkEnRoute() {
+    const incident = topIncident;
+    if (!incident || !isLocalTestApi || isDispatching) return;
+    const eta = etaDraft.trim() ? Number(etaDraft) : null;
+    if (eta !== null && (!Number.isInteger(eta) || eta < 1 || eta > 180)) {
+      showToast("Enter an ETA from 1 to 180 whole minutes, or leave it blank.", "error");
+      return;
+    }
+    setIsDispatching(true);
+    try {
+      await eawsApi.updateIncident(incident.id, {
+        status: "en_route",
+        operator_name: TEST_OPERATOR,
+        eta_minutes: eta,
+        action: `TEST unit marked en route${eta === null ? "" : ` · ETA ${eta} min`}`,
+        expected_version: incident.version,
+      });
+      showToast("TEST unit status updated; the citizen app will receive it on its next poll.", "success");
+      await loadData();
+    } catch (error) {
+      showToast(
+        `Status update failed: ${error instanceof Error ? error.message : "refresh and retry."}`,
+        "error",
+      );
+      await loadData();
+    } finally {
+      setIsDispatching(false);
+    }
+  }
+
+  async function handleMarkOnScene() {
+    const incident = topIncident;
+    if (!incident || !isLocalTestApi || isDispatching) return;
+    setIsDispatching(true);
+    try {
+      await eawsApi.updateIncident(incident.id, {
+        status: "on_scene",
+        operator_name: TEST_OPERATOR,
+        action: "TEST unit marked on scene",
+        expected_version: incident.version,
+      });
+      showToast("TEST unit marked on scene.", "success");
+      await loadData();
+    } catch (error) {
+      showToast(
+        `Status update failed: ${error instanceof Error ? error.message : "refresh and retry."}`,
+        "error",
+      );
+      await loadData();
+    } finally {
+      setIsDispatching(false);
+    }
+  }
+
+  async function handleResolveIncident(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const incident = topIncident;
+    const outcome = resolutionOutcome.trim();
+    const notes = resolutionNotes.trim();
+    if (!incident || !outcome || !notes || !isLocalTestApi || isResolving) return;
+    setIsResolving(true);
+    try {
+      await eawsApi.updateIncident(incident.id, {
+        status: "resolved",
+        operator_name: TEST_OPERATOR,
+        outcome,
+        resolution_notes: notes,
+        action: `TEST incident resolved · ${outcome}`,
+        expected_version: incident.version,
+      });
+      setResolutionOutcome("");
+      setResolutionNotes("");
+      setShowResolveForm(false);
+      showToast("TEST incident resolved and cleared from the active queue. Audit history retained.", "success");
+      await loadData();
+    } catch (error) {
+      showToast(
+        `Resolution failed: ${error instanceof Error ? error.message : "refresh and retry."}`,
+        "error",
+      );
+      await loadData();
+    } finally {
+      setIsResolving(false);
+    }
+  }
+
   // Tele-Med call timer
   useEffect(() => {
     if (!isTeleMedActive) { setCallSeconds(0); return; }
@@ -182,9 +299,13 @@ export default function DashboardPage() {
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase();
-      return matchesSeverity && (!query || searchableText.includes(query));
+      const matchesQueue = showCleared || !CLEARED_STATUSES.has(incident.status);
+      return matchesSeverity && matchesQueue && (!query || searchableText.includes(query));
     });
-  }, [incidents, searchQuery, severityFilter]);
+  }, [incidents, searchQuery, severityFilter, showCleared]);
+  const clearedIncidentCount = incidents.filter((incident) =>
+    CLEARED_STATUSES.has(incident.status),
+  ).length;
   const topIncident =
     visibleIncidents.find((incident) => incident.id === selectedIncident?.id) ??
     visibleIncidents[0] ??
@@ -378,6 +499,167 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+
+          {topIncident && isLocalTestApi && (
+            <div className="border-t border-neutral-900 px-4 py-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare size={12} className="text-neutral-400" />
+                <p className="text-[9px] font-bold tracking-widest text-neutral-300 uppercase">
+                  Citizen updates · TEST
+                </p>
+              </div>
+              <div className="max-h-36 space-y-2 overflow-y-auto" aria-live="polite">
+                {(topIncident.messages ?? []).length === 0 ? (
+                  <p className="text-[10px] text-neutral-500">No incident-thread messages yet.</p>
+                ) : (
+                  topIncident.messages?.map((message) => (
+                    <div key={message.id} className="rounded-lg border border-neutral-800 bg-neutral-900 p-2">
+                      <p className="text-[10px] text-neutral-200">{message.content}</p>
+                      <p className="mt-1 text-[8px] text-neutral-500">
+                        {message.sender} ·{" "}
+                        {message.delivery_state === "fetched_by_citizen_app"
+                          ? "Received by citizen app"
+                          : "Saved on TEST server · waiting for app poll"}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleSendCitizenMessage();
+                }}
+                className="space-y-2"
+              >
+                <label htmlFor="citizen-update" className="sr-only">Message citizen about this incident</label>
+                <textarea
+                  id="citizen-update"
+                  value={messageDraft}
+                  onChange={(event) => setMessageDraft(event.target.value)}
+                  maxLength={1000}
+                  rows={3}
+                  placeholder="Write a TEST update for the citizen app…"
+                  className="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-[10px] text-white placeholder-neutral-600"
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={!messageDraft.trim() || isSendingMessage || CLEARED_STATUSES.has(topIncident.status)}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-neutral-800 px-3 py-2 text-[10px] font-bold text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send size={11} /> {isSendingMessage ? "Saving…" : "Send TEST update"}
+                </button>
+              </form>
+              <p className="text-[9px] text-amber-300">
+                TEST only: saved to this incident thread; no SMS or push is sent.
+              </p>
+            </div>
+          )}
+
+          {topIncident && isLocalTestApi && (
+            <div className="border-t border-neutral-900 px-4 py-3 space-y-2">
+              <p className="text-[9px] font-bold tracking-widest text-neutral-300 uppercase">
+                Response status · TEST
+              </p>
+              {topIncident.status === "dispatched" && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-neutral-400">
+                    Assigned: {topIncident.dispatch_unit || "TEST unit"}
+                  </p>
+                  <label htmlFor="test-eta" className="block text-[9px] text-neutral-500">
+                    ETA in minutes (optional)
+                  </label>
+                  <input
+                    id="test-eta"
+                    type="number"
+                    min={1}
+                    max={180}
+                    step={1}
+                    value={etaDraft}
+                    onChange={(event) => setEtaDraft(event.target.value)}
+                    placeholder="Not provided"
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-xs text-white"
+                  />
+                  <button
+                    type="button"
+                    disabled={isDispatching}
+                    onClick={() => void handleMarkEnRoute()}
+                    className="w-full rounded-lg bg-blue-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    Mark TEST unit en route
+                  </button>
+                </div>
+              )}
+              {topIncident.status === "en_route" && (
+                <button
+                  type="button"
+                  disabled={isDispatching}
+                  onClick={() => void handleMarkOnScene()}
+                  className="w-full rounded-lg bg-blue-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-blue-600 disabled:opacity-50"
+                >
+                  Mark TEST unit on scene
+                </button>
+              )}
+              {CLEARED_STATUSES.has(topIncident.status) ? (
+                <div className="rounded-lg border border-emerald-800/60 bg-emerald-950/30 p-2 text-[10px] text-emerald-200">
+                  <p className="flex items-center gap-1 font-bold">
+                    <CheckCircle2 size={12} /> Resolved by {topIncident.resolved_by || topIncident.operator_name || "operator"}
+                  </p>
+                  {topIncident.resolved_at && (
+                    <p className="mt-1">{new Date(topIncident.resolved_at).toLocaleString()}</p>
+                  )}
+                  {topIncident.outcome && <p className="mt-1">Outcome: {topIncident.outcome}</p>}
+                  {topIncident.resolution_notes && <p className="mt-1">Notes: {topIncident.resolution_notes}</p>}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowResolveForm((open) => !open)}
+                    className="w-full rounded-lg border border-emerald-800/70 bg-emerald-950/30 px-3 py-2 text-[10px] font-bold text-emerald-200 hover:bg-emerald-950/60"
+                  >
+                    {showResolveForm ? "Cancel resolution" : "Resolve & clear from queue"}
+                  </button>
+                  {showResolveForm && (
+                    <form onSubmit={(event) => void handleResolveIncident(event)} className="space-y-2">
+                      <label htmlFor="resolution-outcome" className="sr-only">Resolution outcome</label>
+                      <input
+                        id="resolution-outcome"
+                        value={resolutionOutcome}
+                        onChange={(event) => setResolutionOutcome(event.target.value)}
+                        maxLength={240}
+                        placeholder="Outcome (required)"
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-2 text-[10px] text-white placeholder-neutral-600"
+                        required
+                      />
+                      <label htmlFor="resolution-notes" className="sr-only">Resolution notes</label>
+                      <textarea
+                        id="resolution-notes"
+                        value={resolutionNotes}
+                        onChange={(event) => setResolutionNotes(event.target.value)}
+                        maxLength={2000}
+                        rows={3}
+                        placeholder="Resolution notes (required)"
+                        className="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-[10px] text-white placeholder-neutral-600"
+                        required
+                      />
+                      <p className="text-[9px] text-neutral-500">
+                        Saved with the resolver, time, and incident history. Resolved items leave the active queue but remain in cleared items and Audit.
+                      </p>
+                      <button
+                        type="submit"
+                        disabled={isResolving || !resolutionOutcome.trim() || !resolutionNotes.trim()}
+                        className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isResolving ? "Saving resolution…" : "Confirm resolution"}
+                      </button>
+                    </form>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── CENTER: Full Map ── */}
@@ -449,6 +731,19 @@ export default function DashboardPage() {
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
+            </label>
+            <label className="mb-3 flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[10px] text-neutral-300">
+              <span>Show cleared / resolved</span>
+              <span className="flex items-center gap-2">
+                <span className="text-neutral-500">{clearedIncidentCount}</span>
+                <input
+                  type="checkbox"
+                  checked={showCleared}
+                  onChange={(event) => setShowCleared(event.target.checked)}
+                  aria-label={`Show ${clearedIncidentCount} cleared or resolved incidents`}
+                  className="accent-red-600"
+                />
+              </span>
             </label>
 
             <div className="space-y-2">

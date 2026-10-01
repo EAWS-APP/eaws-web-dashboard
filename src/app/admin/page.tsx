@@ -138,7 +138,11 @@ function AdminContent() {
     const filteredLogs = auditLogs.filter(log => {
       const matchSearch = (log.operator_name || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
                           (log.text || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
-                          (log.citizen_id || "").toLowerCase().includes(auditSearch.toLowerCase());
+                          (log.citizen_id || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
+                          (log.incident_id || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
+                          (log.incident_title || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
+                          (log.outcome || "").toLowerCase().includes(auditSearch.toLowerCase()) ||
+                          (log.resolution_notes || "").toLowerCase().includes(auditSearch.toLowerCase());
       const matchAgency = auditAgencyFilter === "all" || (log.agency || "").toLowerCase().includes(auditAgencyFilter.toLowerCase());
       return matchSearch && matchAgency;
     });
@@ -260,13 +264,25 @@ function AdminContent() {
                         </span>
                       </td>
                       <td className="py-3 px-4 font-mono text-[11px] text-red-400 font-bold">
-                        {log.incident_id || log.citizen_id || "—"}
+                        <div>{log.citizen_id || "Citizen unavailable"}</div>
+                        {log.incident_id && (
+                          <div className="mt-1 text-[9px] font-normal text-neutral-500">
+                            {log.incident_id}{log.incident_title ? ` · ${log.incident_title}` : ""}
+                          </div>
+                        )}
                       </td>
-                      <td className="py-3 px-4 text-neutral-300 max-w-xs truncate">
-                        {log.is_deleted ? (
+                      <td className="py-3 px-4 text-neutral-300 max-w-sm">
+                        <p>{log.is_deleted ? (
                           <span className="text-red-400 italic flex items-center gap-1">Deleted Message (Audit Preserved)</span>
                         ) : (
                           log.text || (log.media_url ? "[Media Attachment]" : "N/A")
+                        )}</p>
+                        {log.message_content && (
+                          <p className="mt-1 text-[10px] text-neutral-400">Message: {log.message_content}</p>
+                        )}
+                        {log.outcome && <p className="mt-1 text-[10px] text-emerald-300">Outcome: {log.outcome}</p>}
+                        {log.resolution_notes && (
+                          <p className="mt-1 whitespace-normal text-[10px] text-neutral-400">Resolution notes: {log.resolution_notes}</p>
                         )}
                       </td>
                       <td className="py-3 px-4">

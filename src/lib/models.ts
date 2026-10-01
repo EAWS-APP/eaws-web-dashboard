@@ -24,6 +24,17 @@ export type IncidentStatus =
   | "retracted"
   | "escalated";
 
+export type IncidentMessage = {
+  id: string;
+  content: string;
+  sender: string;
+  sender_role?: "operator" | "citizen" | string;
+  delivery_state?: string;
+  read_state?: string;
+  created_at: string;
+  delivered_at?: string;
+};
+
 export type Incident = {
   id: string;
   user_id?: string | null;
@@ -43,6 +54,11 @@ export type Incident = {
   operator_name?: string | null;
   dispatch_unit?: string | null;
   eta_minutes?: number | null;
+  outcome?: string | null;
+  resolution_notes?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+  messages?: IncidentMessage[];
   version?: number;
   media_url?: string | null;
   media_type?: "image" | "video" | "audio" | null;
