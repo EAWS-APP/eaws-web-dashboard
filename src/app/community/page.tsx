@@ -499,138 +499,199 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
   );
 }
 
-// ── Community Map (with Places search, pin toggle, inline-profile callback) ─────
-function CommunityMap({posts,focusPost,onProfileOpen}:{posts:Post[];focusPost:Post|null;onProfileOpen:(p:Post)=>void}){
-  const mapRef=useRef<HTMLDivElement>(null);
-  const searchRef=useRef<HTMLInputElement>(null);
-  const mapInst=useRef<any>(null);
-  const markers=useRef<any[]>([]);
-  const infoWin=useRef<any>(null);
-  const [loaded,setLoaded]=useState(false);
-  const [pinsVisible,setPinsVisible]=useState(true);
-  const [placeQ,setPlaceQ]=useState("");
-  const [suggestions,setSuggestions]=useState<any[]>([]);
+// ── Community Map (Leaflet with Search, pin toggle, inline-profile callback) ─────
+function CommunityMap({
+  posts,
+  focusPost,
+  onProfileOpen,
+}: {
+  posts: Post[];
+  focusPost: Post | null;
+  onProfileOpen: (p: Post) => void;
+}) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInst = useRef<any>(null);
+  const LRef = useRef<any>(null);
+  const markersLayer = useRef<any>(null);
+  const [pinsVisible, setPinsVisible] = useState(true);
+  const [placeQ, setPlaceQ] = useState("");
+  const [suggestions, setSuggestions] = useState<any[]>([]);
 
-  useEffect(()=>{
-    if((window as any).google){setLoaded(true);return;}
-    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
-    if(existing){
-      existing.addEventListener("load",()=>setLoaded(true));
-      if((window as any).google) setLoaded(true);
+  // Accra preset locations for quick search
+  const ACCRA_PLACES = [
+    { name: "Ridge Hospital (Greater Accra Regional)", sub: "Castle Rd, Ridge", lat: 5.5601, lng: -0.1983 },
+    { name: "Korle Bu Teaching Hospital", sub: "Guggisberg Ave, Korle Bu", lat: 5.5385, lng: -0.2285 },
+    { name: "37 Military Hospital", sub: "Liberation Rd, 37", lat: 5.5866, lng: -0.1802 },
+    { name: "Makola Market", sub: "Kojo Thompson Rd, CBD", lat: 5.5482, lng: -0.2078 },
+    { name: "Kotoka International Airport (T3)", sub: "Airport Bypass Rd", lat: 5.6052, lng: -0.1717 },
+    { name: "Circle Interchange (Kwame Nkrumah)", sub: "Kwame Nkrumah Ave", lat: 5.5599, lng: -0.2155 },
+    { name: "University of Ghana (UGMC)", sub: "Legon Bypass, Legon", lat: 5.6496, lng: -0.1873 },
+    { name: "Accra Mall", sub: "Tetteh Quarshie Interchange", lat: 5.6226, lng: -0.1742 },
+    { name: "Osu Castle & Marine Drive", sub: "Castle Rd, Osu", lat: 5.5458, lng: -0.1825 },
+    { name: "East Legon Police Station", sub: "Lagos Ave, East Legon", lat: 5.6375, lng: -0.1585 },
+  ];
+
+  // Initialize Leaflet Map
+  useEffect(() => {
+    let isMounted = true;
+    async function init() {
+      if (typeof window === "undefined" || !mapRef.current) return;
+      const L = (await import("leaflet")).default;
+      if (!isMounted) return;
+      LRef.current = L;
+
+      if (!mapInst.current) {
+        const map = L.map(mapRef.current, {
+          center: [5.6037, -0.1870],
+          zoom: 12,
+          zoomControl: false,
+          attributionControl: false,
+        });
+
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+          maxZoom: 19,
+          subdomains: "abcd",
+        }).addTo(map);
+
+        markersLayer.current = L.featureGroup().addTo(map);
+        mapInst.current = map;
+      }
+    }
+    void init();
+    return () => {
+      isMounted = false;
+      if (mapInst.current) {
+        mapInst.current.remove();
+        mapInst.current = null;
+      }
+    };
+  }, []);
+
+  // Search autocompletion
+  useEffect(() => {
+    if (!placeQ.trim()) {
+      setSuggestions([]);
       return;
     }
-    const s=document.createElement("script");
-    s.src=`https://maps.googleapis.com/maps/api/js?key=AIzaSyBsWnNq9bnzB8UATSXH0Hxiv6rDbQirD-Y&libraries=places`;
-    s.async=true;s.onload=()=>setLoaded(true);
-    document.head.appendChild(s);
-  },[]);
+    const q = placeQ.toLowerCase();
+    const matches = ACCRA_PLACES.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.sub.toLowerCase().includes(q)
+    );
+    setSuggestions(matches);
+  }, [placeQ]);
 
-  useEffect(()=>{
-    if(!loaded||!mapRef.current)return;
-    const g=(window as any).google;
-    mapInst.current=new g.maps.Map(mapRef.current,{center:{lat:5.6037,lng:-0.1870},zoom:12,styles:darkStyle,disableDefaultUI:true});
-  },[loaded]);
-
-  // Places autocomplete — use bounds (LatLngBounds) not Circle for AutocompleteService
-  useEffect(()=>{
-    if(!loaded||!placeQ.trim()){setSuggestions([]);return;}
-    const g=(window as any).google;
-    if(!g?.maps?.places)return;
-    const svc=new g.maps.places.AutocompleteService();
-    const t=setTimeout(()=>{
-      const ghanaBounds=new g.maps.LatLngBounds(
-        new g.maps.LatLng(4.5,- 3.5),
-        new g.maps.LatLng(11.5,1.5)
-      );
-      svc.getPlacePredictions({input:placeQ,bounds:ghanaBounds,types:['geocode','establishment']},(preds:any,status:any)=>{
-        if(status===g.maps.places.PlacesServiceStatus.OK&&preds){
-          setSuggestions(preds.slice(0,6).map((p:any)=>({name:p.structured_formatting?.main_text||p.description,sub:p.structured_formatting?.secondary_text||'',placeId:p.place_id})));
-        } else setSuggestions([]);
-      });
-    },350);
-    return()=>clearTimeout(t);
-  },[placeQ,loaded]);
-
-  function selectPlace(placeId:string,name:string){
-    const g=(window as any).google;
-    if(!g||!mapInst.current)return;
-    const svc=new g.maps.places.PlacesService(mapInst.current);
-    svc.getDetails({placeId},(place:any,status:any)=>{
-      if(status===g.maps.places.PlacesServiceStatus.OK&&place){
-        mapInst.current.panTo(place.geometry.location);
-        mapInst.current.setZoom(15);
-        setPlaceQ(name);setSuggestions([]);
-      }
-    });
+  function selectPlace(place: any) {
+    if (!mapInst.current) return;
+    mapInst.current.flyTo([place.lat, place.lng], 15, { duration: 1.2 });
+    setPlaceQ(place.name);
+    setSuggestions([]);
   }
 
-  // Draw / redraw markers
-  useEffect(()=>{
-    if(!mapInst.current||!loaded)return;
-    const g=(window as any).google;
-    markers.current.forEach(m=>m.marker?.setMap(null));
-    markers.current=[];
-    if(!pinsVisible)return;
-    posts.forEach(p=>{
-      if(!p.latitude||!p.longitude)return;
-      const isCrit=p.severity==="CRITICAL";
-      const m=new g.maps.Marker({position:{lat:p.latitude,lng:p.longitude},map:mapInst.current,title:p.title,icon:{path:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z",fillColor:isCrit?"#ef4444":"#f97316",fillOpacity:1,strokeColor:"#fff",strokeWeight:2,scale:1.4,anchor:new g.maps.Point(12,22)}});
-      // InfoWindow shows post info only — no external link
-      const iw=new g.maps.InfoWindow({content:`<div style="font-family:monospace;font-size:11px;color:#111;padding:6px;min-width:180px"><b style="color:#dc2626;display:block;margin-bottom:4px">${p.title}</b><span style="color:#555;font-size:10px">${p.location_name}</span><br/><span style="color:#777;font-size:10px">${p.reporter_profile?.full_name||'Citizen Reporter'}</span><br/><button onclick="window.__communityOpenProfile&&window.__communityOpenProfile('${p.id}')" style="display:block;width:100%;margin-top:8px;background:#dc2626;color:#fff;border:none;padding:5px 0;border-radius:4px;font-weight:bold;cursor:pointer;font-family:monospace;font-size:10px">View Profile</button></div>`});
-      m.addListener("click",()=>{if(infoWin.current)infoWin.current.close();iw.open(mapInst.current,m);infoWin.current=iw;});
-      markers.current.push({marker:m,post:p});
-    });
-  },[posts,loaded,pinsVisible]);
+  // Render Pins
+  useEffect(() => {
+    const map = mapInst.current;
+    const L = LRef.current;
+    const layer = markersLayer.current;
+    if (!map || !L || !layer) return;
 
-  // Register global callback so InfoWindow button can open profile in right panel
-  useEffect(()=>{
-    (window as any).__communityOpenProfile=(postId:string)=>{
-      const found=posts.find(p=>p.id===postId);
-      if(found)onProfileOpen(found);
-      if(infoWin.current)infoWin.current.close();
-    };
-    return()=>{delete (window as any).__communityOpenProfile;};
-  },[posts,onProfileOpen]);
+    layer.clearLayers();
+    if (!pinsVisible) return;
 
-  // Pan to focused post
-  useEffect(()=>{
-    if(!focusPost||!mapInst.current||!loaded)return;
-    const g=(window as any).google;
-    const targetLat = focusPost.latitude || 5.6037;
-    const targetLng = focusPost.longitude || -0.1870;
-    
-    // Trigger map resize event so Google Maps adjusts to container width
-    g.maps.event.trigger(mapInst.current, "resize");
-    mapInst.current.panTo({lat: targetLat, lng: targetLng});
-    mapInst.current.setZoom(15);
+    posts.forEach((p) => {
+      if (!p.latitude || !p.longitude) return;
+      const isCrit = p.severity === "CRITICAL";
+      const color = isCrit ? "#ef4444" : "#f59e0b";
 
-    const entry=markers.current.find((e:any)=>e.post?.id===focusPost.id);
-    if(entry){
-      if(infoWin.current)infoWin.current.close();
-      const iw=new g.maps.InfoWindow({content:`<div style="font-family:monospace;font-size:11px;color:#111;padding:4px"><b style="color:#dc2626">${focusPost.title}</b><br/><span style="color:#555;font-size:10px">${focusPost.location_name || 'Accra, Ghana'}</span></div>`});
-      iw.open(mapInst.current,entry.marker);
-      infoWin.current=iw;
-    }
-  },[focusPost,loaded]);
-
-  return(
-    <div className="w-full h-full relative">
-      <div ref={mapRef} className="w-full h-full"/>
-      {!loaded&&<div className="absolute inset-0 flex items-center justify-center bg-[#111]"><p className="text-neutral-500 text-sm">Loading map...</p></div>}
-
-      {/* Places search overlay */}
-      <div className="absolute top-3 left-3 z-10 w-64">
-        <div className="relative">
-          <Search size={13} className="absolute left-3 top-2.5 text-neutral-400 pointer-events-none"/>
-          <input ref={searchRef} value={placeQ} onChange={e=>setPlaceQ(e.target.value)} placeholder="Search areas, towns, cities..." className="w-full bg-[#111]/95 backdrop-blur border border-white/20 rounded-xl pl-8 pr-8 py-2 text-[12px] text-white placeholder-neutral-500 focus:outline-none focus:border-white/40"/>
-          {placeQ&&<button onClick={()=>{setPlaceQ('');setSuggestions([]);}} className="absolute right-2.5 top-2.5 text-neutral-500 hover:text-white"><X size={12}/></button>}
+      const html = `
+        <div class="relative flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
+          <span class="absolute w-7 h-7 rounded-full animate-ping opacity-60" style="background-color: ${color}40;"></span>
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-lg border border-white font-bold text-white" style="background-color: ${color};">
+            ${isCrit ? "🚨" : "📢"}
+          </div>
         </div>
-        {suggestions.length>0&&(
-          <div className="mt-1 bg-[#111]/97 border border-white/15 rounded-xl overflow-hidden shadow-2xl">
-            {suggestions.map((s:any)=>(
-              <button key={s.placeId} onClick={()=>selectPlace(s.placeId,s.name)} className="w-full text-left px-3 py-2 hover:bg-white/5 border-b border-white/[0.04] last:border-0 transition-colors">
-                <p className="text-white text-[12px] font-semibold">{s.name}</p>
-                <p className="text-neutral-500 text-[10px]">{s.sub}</p>
+      `;
+
+      const customIcon = L.divIcon({
+        html,
+        className: "custom-community-pin",
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      });
+
+      const marker = L.marker([p.latitude, p.longitude], { icon: customIcon }).addTo(layer);
+
+      const popupHtml = `
+        <div class="p-3 text-zinc-100 bg-[#121215] rounded-xl border border-white/10 min-w-[200px] font-sans">
+          <div class="flex items-center justify-between gap-1 mb-1">
+            <span class="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase" style="background: ${color}20; color: ${color};">
+              ${p.severity}
+            </span>
+            <span class="text-[10px] text-zinc-400 font-mono">${p.location_name || "Accra"}</span>
+          </div>
+          <h4 class="text-xs font-bold text-white mb-1 leading-snug">${p.title}</h4>
+          <p class="text-[10px] text-zinc-400 mb-2 font-mono">${p.reporter_profile?.full_name || "Citizen Reporter"}</p>
+          <button
+            onclick="window.__communityOpenProfile&&window.__communityOpenProfile('${p.id}')"
+            class="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-center font-bold text-[10px] transition-colors"
+          >
+            View Citizen Signal
+          </button>
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml, { className: "emergency-popup", closeButton: false });
+    });
+  }, [posts, pinsVisible]);
+
+  // Global callback for popups
+  useEffect(() => {
+    (window as any).__communityOpenProfile = (postId: string) => {
+      const found = posts.find((p) => p.id === postId);
+      if (found) onProfileOpen(found);
+    };
+    return () => {
+      delete (window as any).__communityOpenProfile;
+    };
+  }, [posts, onProfileOpen]);
+
+  // Focus post pan
+  useEffect(() => {
+    if (!focusPost || !mapInst.current || !LRef.current) return;
+    const lat = focusPost.latitude || 5.6037;
+    const lng = focusPost.longitude || -0.1870;
+    mapInst.current.flyTo([lat, lng], 15, { duration: 1.2 });
+  }, [focusPost]);
+
+  return (
+    <div className="w-full h-full relative select-none">
+      <div ref={mapRef} className="w-full h-full z-0" />
+
+      {/* Search overlay */}
+      <div className="absolute top-3 left-3 z-10 w-72">
+        <div className="apple-glass rounded-xl p-1 flex items-center gap-2 shadow-2xl">
+          <Search size={13} className="text-zinc-400 ml-2 pointer-events-none" />
+          <input
+            value={placeQ}
+            onChange={(e) => setPlaceQ(e.target.value)}
+            placeholder="Search Accra areas, towns, landmarks..."
+            className="w-full bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none py-1 font-medium"
+          />
+          {placeQ && (
+            <button onClick={() => { setPlaceQ(""); setSuggestions([]); }} className="p-1 text-zinc-400 hover:text-white">
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {suggestions.length > 0 && (
+          <div className="apple-card mt-1.5 rounded-xl bg-[#121215]/95 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden divide-y divide-white/5 max-h-56 overflow-y-auto">
+            {suggestions.map((s: any) => (
+              <button
+                key={s.name}
+                onClick={() => selectPlace(s)}
+                className="w-full text-left p-2.5 hover:bg-white/[0.08] transition-colors"
+              >
+                <p className="text-white text-xs font-bold truncate">{s.name}</p>
+                <p className="text-zinc-400 text-[10px] truncate">{s.sub}</p>
               </button>
             ))}
           </div>
@@ -638,9 +699,18 @@ function CommunityMap({posts,focusPost,onProfileOpen}:{posts:Post[];focusPost:Po
       </div>
 
       {/* Pin toggle button */}
-      <button onClick={()=>setPinsVisible(v=>!v)} className={`absolute top-3 right-3 z-10 flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold transition-all backdrop-blur ${pinsVisible?'bg-[#111]/90 border-white/20 text-white hover:bg-[#1a1a1a]':'bg-neutral-900/90 border-white/10 text-neutral-500 hover:text-white'}`}>
-        <MapPin size={12}/> {pinsVisible?`${posts.filter(p=>p.latitude&&p.longitude).length} Pins`:'Pins Off'}
-      </button>
+      <div className="absolute top-3 right-3 z-10">
+        <button
+          onClick={() => setPinsVisible(!pinsVisible)}
+          className={`apple-btn px-3 py-1.5 rounded-xl text-xs font-bold border transition-all shadow-md ${
+            pinsVisible
+              ? "bg-red-600 text-white border-red-500/50 shadow-[0_0_12px_rgba(239,68,68,0.35)]"
+              : "bg-black/60 text-zinc-400 border-white/10 hover:text-white"
+          }`}
+        >
+          {pinsVisible ? "Hide Signals" : "Show Signals"}
+        </button>
+      </div>
 
       {/* Focused post bottom card */}
       {focusPost&&(
