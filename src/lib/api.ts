@@ -48,6 +48,18 @@ function mapIfgIncident(row: any): Incident {
     eta_minutes: row.eta_minutes ?? null,
     media_url: row.media_url ?? null,
     media_type: row.media_type ?? null,
+    reporter_profile: row.reporter_profile ?? (
+      row.phone || row.user_phone || row.email || row.emergency_contacts
+        ? {
+            full_name: row.full_name ?? row.user_name ?? null,
+            user_role: row.user_role ?? "citizen",
+            phone: row.phone ?? row.user_phone ?? null,
+            email: row.email ?? null,
+            address: row.address ?? null,
+            emergency_contacts: row.emergency_contacts ?? null,
+          }
+        : null
+    ),
     likes_count: row.likes_count ?? 0,
     comments_count: row.comments_count ?? 0,
     views_count: row.views_count ?? 0,
@@ -78,10 +90,6 @@ type JsonBody = Record<string, unknown> | FormData | undefined;
 type AuthFetchOptions = Omit<RequestInit, "body"> & { body?: JsonBody };
 
 async function authFetch<T>(path: string, options: AuthFetchOptions = {}): Promise<T> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
   let token: string | undefined;
   if (!isLocalTestApi) {
     const { data: { session } } = await supabase.auth.getSession();
@@ -134,12 +142,35 @@ export const eawsApi = {
       };
       permissions: string[];
     }>("/me"),
-  getLiveIncidents: async () => { const rows = await ifgFetch<any[]>("/api/database/records/incidents?order=created_at.desc&limit=100"); return rows.map(mapIfgIncident); },
+  getLiveIncidents: async (): Promise<Incident[]> => {
+    if (isLocalTestApi) {
+      const result = await authFetch<{ incidents: Incident[] }>("/incidents/feed");
+      return result.incidents;
+    }
+    const rows = await ifgFetch<any[]>("/api/database/records/incidents?order=created_at.desc&limit=100");
+    return rows.map(mapIfgIncident);
+  },
+  getCitizenProfile: async (userId: string): Promise<Record<string, unknown> | null> => {
+    if (isLocalTestApi) {
+      const result = await authFetch<{ profile: Record<string, unknown> }>(
+        `/profiles/${encodeURIComponent(userId)}`
+      );
+      return result.profile;
+    }
+    const rows = await ifgFetch<Array<Record<string, unknown>>>(
+      `/api/database/records/profiles?user_id=eq.${encodeURIComponent(userId)}&limit=1`
+    );
+    return rows.find((row) => row.user_id === userId) ?? null;
+  },
   getIncidentFeed: (query = "") =>
     authFetch<{ success: boolean; incidents: Incident[] }>(`/incidents/feed${query}`).then(
       (r) => r.incidents
     ),
-  getLiveUnits: async () => { const rows = await ifgFetch<any[]>("/api/database/records/agency_units?limit=100"); return rows.map(mapIfgUnit); },
+  getLiveUnits: async (): Promise<AgencyUnit[]> => {
+    if (isLocalTestApi) return [];
+    const rows = await ifgFetch<any[]>("/api/database/records/agency_units?limit=100");
+    return rows.map(mapIfgUnit);
+  },
   triageIncident: (id: string, payload: { severity: string; status: string; notes?: string }) =>
     authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
       method: "PATCH",
@@ -160,7 +191,49 @@ export const eawsApi = {
       body: payload,
     }),
   updateIncident: (id: string, payload: Partial<Incident> & { expected_version?: number; action?: string }) => authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}`, { method: "PATCH", body: payload }).then((r) => r.incident),
-  sendIncidentMessage: (incidentId: string, content: string) => authFetch<{ message: IncidentMessage }>(`/incidents/${incidentId}/messages`, { method: "POST", body: { content } }).then((r) => r.message),
+  claimIncident: (
+    id: string,
+    payload: { operator_name: string; expected_version?: number },
+  ): Promise<Incident> =>
+    authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}`, {
+      method: "PATCH",
+      body: {
+        assigned_to: payload.operator_name,
+        operator_name: payload.operator_name,
+        action: `claimed by ${payload.operator_name}`,
+        expected_version: payload.expected_version,
+      },
+    }).then((result) => result.incident),
+  sendIncidentMessage: (
+    incidentId: string,
+    content: string,
+    clientMessageId?: string,
+  ) =>
+    authFetch<{ message: IncidentMessage }>(`/incidents/${incidentId}/messages`, {
+      method: "POST",
+      body: { content, client_message_id: clientMessageId },
+    }).then((r) => r.message),
+  getTestMessageThreads: () =>
+    authFetch<{ threads: Array<{
+      incident_id: string;
+      citizen_id: string;
+      citizen_name: string;
+      incident_title: string;
+      incident_status: string;
+      last_message: {
+        id: string;
+        text: string;
+        sender: string;
+        time: string;
+        delivery_state?: string;
+        read_state?: string;
+      } | null;
+      unread_count: number;
+    }> }>("/messages/threads").then((result) => result.threads),
+  getTestIncidentMessages: (incidentId: string) =>
+    authFetch<{ messages: IncidentMessage[] }>(
+      `/incidents/${encodeURIComponent(incidentId)}/messages`,
+    ).then((result) => result.messages),
   escalateIncident: (id: string, reason?: string) =>
     authFetch<{ success: boolean; incident: Incident }>(`/incidents/${id}/triage`, {
       method: "PATCH",

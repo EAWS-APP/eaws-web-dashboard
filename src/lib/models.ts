@@ -75,9 +75,17 @@ export type Incident = {
     storage_path?: string;
   }> | null;
   reporter_profile?: {
-    full_name: string;
-    user_role: string;
+    full_name?: string | null;
+    user_role?: string | null;
     operator_code?: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    emergency_contacts?: Array<{
+      name: string;
+      relation?: string | null;
+      phone?: string | null;
+    }> | null;
   } | null;
 };
 

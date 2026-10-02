@@ -4,9 +4,9 @@ import dynamic from "next/dynamic";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Clock, MapPin, Activity, Radio, Phone, Send,
-  Shield, Flame, AlertTriangle, Wifi, ChevronRight, X, MessageSquare, CheckCircle2,
-  Zap, Heart, PanelLeftClose, PanelRightClose, PanelRightOpen, ChevronLeft
+  MapPin, Activity, Phone, Send,
+  ChevronRight, MessageSquare, CheckCircle2,
+  Zap, Heart, PanelLeftClose, PanelRightClose, PanelRightOpen
 } from "lucide-react";
 import { eawsApi, isLocalTestApi } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
@@ -73,10 +73,13 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [isDispatching, setIsDispatching] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
   const [showCleared, setShowCleared] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [chatFocusIncidentId, setChatFocusIncidentId] = useState<string | null>(null);
+  const messageComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const [resolutionOutcome, setResolutionOutcome] = useState("");
   const [resolutionNotes, setResolutionNotes] = useState("");
   const [showResolveForm, setShowResolveForm] = useState(false);
@@ -147,7 +150,7 @@ export default function DashboardPage() {
   }, [loadData]);
 
   async function handleDispatch(agencyType: string, incidentOverride?: typeof selectedIncident) {
-    const target = incidentOverride || selectedIncident;
+    const target = incidentOverride ?? topIncident;
     if (!target) return;
     setIsDispatching(true);
     try {
@@ -168,10 +171,40 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleClaimIncident(incidentOverride?: Incident | null) {
+    const incident = incidentOverride ?? topIncident;
+    if (!incident || isClaiming) return;
+    if (incident.assigned_to && incident.assigned_to !== TEST_OPERATOR) {
+      showToast(`This case is already being handled by ${incident.assigned_to}.`, "error");
+      return;
+    }
+    setIsClaiming(true);
+    try {
+      await eawsApi.claimIncident(incident.id, {
+        operator_name: TEST_OPERATOR,
+        expected_version: incident.version,
+      });
+      showToast(`You are now handling ${incident.id}.`, "success");
+      await loadData();
+    } catch (error) {
+      showToast(
+        `Could not take this case: ${error instanceof Error ? error.message : "refresh and retry."}`,
+        "error",
+      );
+      await loadData();
+    } finally {
+      setIsClaiming(false);
+    }
+  }
+
   async function handleSendCitizenMessage() {
     const incident = topIncident;
     const content = messageDraft.trim();
     if (!incident || !content || isSendingMessage || !isLocalTestApi) return;
+    if (incident.assigned_to && incident.assigned_to !== TEST_OPERATOR) {
+      showToast(`This case is owned by ${incident.assigned_to}; message sending is disabled.`, "error");
+      return;
+    }
     setIsSendingMessage(true);
     try {
       await eawsApi.sendIncidentMessage(incident.id, content);
@@ -326,10 +359,60 @@ export default function DashboardPage() {
     );
   const dispatchDisabled =
     isDispatching || !topIncident || testDispatchAlreadyRecorded;
-  const mapIncidents = useMemo(() => visibleIncidents.slice(0, 100), [visibleIncidents]);
+  const mapIncidents = visibleIncidents;
+  const topIncidentOwner = topIncident?.assigned_to || null;
+  const isOwnedByAnotherOperator =
+    Boolean(topIncidentOwner && topIncidentOwner !== TEST_OPERATOR);
 
   const [isLeftOpen, setIsLeftOpen] = useState(true);
   const [isRightOpen, setIsRightOpen] = useState(true);
+
+  const selectIncident = useCallback((incidentId: string) => {
+    const found = incidents.find((incident) => incident.id === incidentId);
+    if (!found) return;
+    setSelectedIncident(found);
+    setIsLeftOpen(true);
+  }, [incidents]);
+
+  const openReporterProfile = useCallback((incidentId: string) => {
+    selectIncident(incidentId);
+    setIsProfileModalOpen(true);
+  }, [selectIncident]);
+
+  const openIncidentChat = useCallback((incidentId: string) => {
+    selectIncident(incidentId);
+    setChatFocusIncidentId(incidentId);
+  }, [selectIncident]);
+
+  const openFullReporterProfile = useCallback((incident: Incident) => {
+    if (!incident.user_id) {
+      showToast("This report does not include a reporter account ID.", "error");
+      return;
+    }
+    router.push(`/citizen?id=${encodeURIComponent(incident.user_id)}`);
+  }, [router]);
+
+  useEffect(() => {
+    if (!chatFocusIncidentId || topIncident?.id !== chatFocusIncidentId || !isLeftOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      messageComposerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      messageComposerRef.current?.focus();
+      setChatFocusIncidentId(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [chatFocusIncidentId, isLeftOpen, topIncident?.id]);
+
+  const reporterProfile = topIncident?.reporter_profile;
+  const reporterPhone = reporterProfile?.phone?.trim() || "";
+  const reporterEmail = reporterProfile?.email?.trim() || "";
+  const emergencyContacts = reporterProfile?.emergency_contacts ?? [];
+  const reporterInitials = (topIncident?.user_name || "Citizen")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
 
   return (
     <SentinelShell
@@ -373,20 +456,49 @@ export default function DashboardPage() {
           </div>
 
           {/* Citizen info */}
-          <div className="px-4 py-3 border-b border-neutral-900 cursor-pointer hover:bg-neutral-900/50 transition-colors" onClick={() => setIsProfileModalOpen(true)}>
-            <div className="flex justify-between items-center mb-1">
-              <p className="text-[8px] font-bold tracking-widest text-neutral-600 uppercase">Name</p>
-              <ChevronRight size={12} className="text-neutral-600" />
-            </div>
-            <p className="text-sm font-bold text-white">
-              {topIncident?.user_name || topIncident?.title?.split("—")[1]?.trim() || topIncident?.title || "Unknown Citizen"}
-            </p>
-
-            <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-              <p className="text-[10px] font-bold text-neutral-300">Medical data masked</p>
-              <p className="mt-1 text-[9px] text-neutral-500">Authorized reveal and access audit are not connected.</p>
-            </div>
+          <div className="border-b border-neutral-900">
+            <button
+              type="button"
+              className="w-full px-4 py-3 text-left hover:bg-neutral-900/50 transition-colors"
+              onClick={() => topIncident && openReporterProfile(topIncident.id)}
+              disabled={!topIncident}
+              aria-label="Open reporter profile"
+            >
+              <span className="flex justify-between items-center mb-1">
+                <span className="text-[8px] font-bold tracking-widest text-neutral-600 uppercase">Reporter profile</span>
+                <ChevronRight size={12} className="text-neutral-600" />
+              </span>
+              <span className="block text-sm font-bold text-white">
+                {topIncident?.user_name || topIncident?.title?.split("—")[1]?.trim() || topIncident?.title || "Unknown Citizen"}
+              </span>
+              <span className="mt-1 block text-[9px] font-mono text-neutral-500">
+                {topIncident?.user_id || "Reporter ID unavailable"}
+              </span>
+            </button>
           </div>
+
+          {topIncident && !CLEARED_STATUSES.has(topIncident.status) && (
+            <div className="px-4 py-3 border-b border-neutral-900">
+              <p className="text-[8px] font-bold tracking-widest text-neutral-600 uppercase mb-2">Case ownership</p>
+              {topIncidentOwner ? (
+                <p className={`text-[11px] font-semibold ${isOwnedByAnotherOperator ? "text-amber-300" : "text-emerald-300"}`}>
+                  {isOwnedByAnotherOperator ? `Working: ${topIncidentOwner}` : "You are handling this case"}
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleClaimIncident(topIncident)}
+                  disabled={isClaiming}
+                  className="w-full rounded-lg border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-[10px] font-bold text-amber-200 hover:bg-amber-950/70 disabled:opacity-50"
+                >
+                  {isClaiming ? "Taking case…" : "Take this case"}
+                </button>
+              )}
+              {isOwnedByAnotherOperator && (
+                <p className="mt-1 text-[9px] text-neutral-500">Only the assigned operator should act on this incident.</p>
+              )}
+            </div>
+          )}
 
           {/* AI Prediction */}
           {meta.ai_confidence && (
@@ -453,7 +565,7 @@ export default function DashboardPage() {
             <Phone size={12} /> {isLocalTestApi ? "Call unavailable in TEST" : "Initiate Tele-Med Link"}
             </button>
             <button
-              disabled={dispatchDisabled}
+              disabled={dispatchDisabled || isOwnedByAnotherOperator}
               onClick={() => handleDispatch("police", topIncident)}
               className="w-full py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
@@ -484,7 +596,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex gap-1.5">
                   <button
-                    disabled={dispatchDisabled}
+                    disabled={dispatchDisabled || isOwnedByAnotherOperator}
                     onClick={() => handleDispatch(ag.key)}
                     className={`flex-1 text-[9px] font-bold text-white py-1.5 rounded transition-colors disabled:opacity-50 ${ag.color}`}
                   >
@@ -542,8 +654,10 @@ export default function DashboardPage() {
                 <label htmlFor="citizen-update" className="sr-only">Message citizen about this incident</label>
                 <textarea
                   id="citizen-update"
+                  ref={messageComposerRef}
                   value={messageDraft}
                   onChange={(event) => setMessageDraft(event.target.value)}
+                  disabled={isOwnedByAnotherOperator}
                   maxLength={1000}
                   rows={3}
                   placeholder="Write a TEST update for the citizen app…"
@@ -552,7 +666,7 @@ export default function DashboardPage() {
                 />
                 <button
                   type="submit"
-                  disabled={!messageDraft.trim() || isSendingMessage || CLEARED_STATUSES.has(topIncident.status)}
+                  disabled={!messageDraft.trim() || isSendingMessage || isOwnedByAnotherOperator || CLEARED_STATUSES.has(topIncident.status)}
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-neutral-800 px-3 py-2 text-[10px] font-bold text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Send size={11} /> {isSendingMessage ? "Saving…" : "Send TEST update"}
@@ -561,6 +675,15 @@ export default function DashboardPage() {
               <p className="text-[9px] text-amber-300">
                 TEST only: saved to this incident thread; no SMS or push is sent.
               </p>
+              {topIncident.user_id && (
+                <button
+                  type="button"
+                  onClick={() => openFullReporterProfile(topIncident)}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-[10px] font-bold text-neutral-200 transition-colors hover:border-neutral-500 hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500"
+                >
+                  View full profile
+                </button>
+              )}
             </div>
           )}
 
@@ -590,7 +713,7 @@ export default function DashboardPage() {
                   />
                   <button
                     type="button"
-                    disabled={isDispatching}
+                    disabled={isDispatching || isOwnedByAnotherOperator}
                     onClick={() => void handleMarkEnRoute()}
                     className="w-full rounded-lg bg-blue-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-blue-600 disabled:opacity-50"
                   >
@@ -601,7 +724,7 @@ export default function DashboardPage() {
               {topIncident.status === "en_route" && (
                 <button
                   type="button"
-                  disabled={isDispatching}
+                  disabled={isDispatching || isOwnedByAnotherOperator}
                   onClick={() => void handleMarkOnScene()}
                   className="w-full rounded-lg bg-blue-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-blue-600 disabled:opacity-50"
                 >
@@ -624,6 +747,7 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={() => setShowResolveForm((open) => !open)}
+                    disabled={isOwnedByAnotherOperator}
                     className="w-full rounded-lg border border-emerald-800/70 bg-emerald-950/30 px-3 py-2 text-[10px] font-bold text-emerald-200 hover:bg-emerald-950/60"
                   >
                     {showResolveForm ? "Cancel resolution" : "Resolve & clear from queue"}
@@ -635,6 +759,7 @@ export default function DashboardPage() {
                         id="resolution-outcome"
                         value={resolutionOutcome}
                         onChange={(event) => setResolutionOutcome(event.target.value)}
+                        disabled={isOwnedByAnotherOperator}
                         maxLength={240}
                         placeholder="Outcome (required)"
                         className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-2 text-[10px] text-white placeholder-neutral-600"
@@ -645,6 +770,7 @@ export default function DashboardPage() {
                         id="resolution-notes"
                         value={resolutionNotes}
                         onChange={(event) => setResolutionNotes(event.target.value)}
+                        disabled={isOwnedByAnotherOperator}
                         maxLength={2000}
                         rows={3}
                         placeholder="Resolution notes (required)"
@@ -656,7 +782,7 @@ export default function DashboardPage() {
                       </p>
                       <button
                         type="submit"
-                        disabled={isResolving || !resolutionOutcome.trim() || !resolutionNotes.trim()}
+                        disabled={isResolving || isOwnedByAnotherOperator || !resolutionOutcome.trim() || !resolutionNotes.trim()}
                         className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isResolving ? "Saving resolution…" : "Confirm resolution"}
@@ -674,13 +800,10 @@ export default function DashboardPage() {
           <LiveMap
             incidents={mapIncidents}
             units={units}
-            onSelectIncident={(id) => {
-              const found = incidents.find((inc) => inc.id === id);
-              if (found) {
-                setSelectedIncident(found);
-                setIsLeftOpen(true);
-              }
-            }}
+            selectedIncidentId={topIncident?.id}
+            onSelectIncident={selectIncident}
+            onOpenReporterProfile={openReporterProfile}
+            onOpenIncidentChat={openIncidentChat}
           />
 
           {/* Floating re-open button for Dispatch Queue when closed */}
@@ -754,67 +877,86 @@ export default function DashboardPage() {
             </label>
 
             <div className="space-y-2">
-              {visibleIncidents.slice(0, 4).map((inc) => (
-                <div
+              {visibleIncidents.map((inc) => (
+                <article
                   key={inc.id}
-                  onClick={() => {
-                    setSelectedIncident(inc);
-                    setIsLeftOpen(true);
-                  }}
-                  className={`rounded-lg border p-3 cursor-pointer transition-all hover:border-neutral-700 ${
+                  className={`rounded-lg border p-3 transition-all hover:border-neutral-700 ${
                     selectedIncident?.id === inc.id ? "border-red-600/50 bg-red-500/5" : "border-neutral-800 bg-neutral-900/50"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-1.5">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[9px] font-bold text-neutral-500 uppercase mb-0.5">
-                        {String(inc.severity).toUpperCase()}
-                        {inc.severity_confidence === "unverified" || inc.is_verified === false
-                          ? " · UNVERIFIED"
-                          : ""}
-                      </p>
-                      <p className="text-[11px] font-semibold text-white leading-tight truncate">{inc.title}</p>
-                      <p className="text-[9px] text-neutral-500 flex items-center gap-1 mt-0.5">
-                        <MapPin size={8} /> {inc.location_name || "Location unavailable"}
-                      </p>
-                      <p className="text-[9px] text-neutral-500 mt-1">
-                        {inc.status.replaceAll("_", " ")} · {inc.operator_name || inc.assigned_to || "Unassigned"} · {timeAgo(inc.created_at)}
-                      </p>
+                  <button
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() => selectIncident(inc.id)}
+                    aria-label={`Select ${inc.title} and focus it on the map`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] font-bold text-neutral-500 uppercase mb-0.5">
+                          {String(inc.severity).toUpperCase()}
+                          {inc.severity_confidence === "unverified" || inc.is_verified === false
+                            ? " · UNVERIFIED"
+                            : ""}
+                        </p>
+                        <p className="text-[11px] font-semibold text-white leading-tight truncate">{inc.title}</p>
+                        <p className="text-[9px] text-neutral-500 flex items-center gap-1 mt-0.5">
+                          <MapPin size={8} /> {inc.location_name || "Location unavailable"}
+                        </p>
+                        <p className="text-[9px] text-neutral-500 mt-1">
+                          {inc.status.replaceAll("_", " ")} · Owner: {inc.assigned_to || "Unassigned"} · {timeAgo(inc.created_at)}
+                        </p>
+                        {(inc.latitude == null || inc.longitude == null) && (
+                          <p className="mt-1 text-[9px] font-semibold text-amber-300">No location pin available</p>
+                        )}
+                      </div>
+                      <span className={`shrink-0 text-[8px] font-bold border rounded px-1.5 py-0.5 ${PRIORITY_COLOR[String(inc.severity).toUpperCase()] || PRIORITY_COLOR["LOW"]}`}>
+                        {String(inc.severity).toUpperCase() === "CRITICAL"
+                          ? "CRITICAL"
+                          : ["WARNING", "HIGH"].includes(String(inc.severity).toUpperCase())
+                            ? "HIGH"
+                            : ["LOW", "MEDIUM"].includes(String(inc.severity).toUpperCase())
+                              ? String(inc.severity).toUpperCase()
+                              : "TRIAGE"}
+                      </span>
                     </div>
-                    <span className={`shrink-0 text-[8px] font-bold border rounded px-1.5 py-0.5 ${PRIORITY_COLOR[String(inc.severity).toUpperCase()] || PRIORITY_COLOR["LOW"]}`}>
-                      {String(inc.severity).toUpperCase() === "CRITICAL"
-                        ? "CRITICAL"
-                        : ["WARNING", "HIGH"].includes(String(inc.severity).toUpperCase())
-                          ? "HIGH"
-                          : ["LOW", "MEDIUM"].includes(String(inc.severity).toUpperCase())
-                            ? String(inc.severity).toUpperCase()
-                            : "TRIAGE"}
-                    </span>
-                  </div>
+                  </button>
 
                   <div className="flex gap-1.5 mt-2">
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedIncident(inc);
-                        setIsLeftOpen(true);
-                        handleDispatch("police", inc);
+                      onClick={() => {
+                        selectIncident(inc.id);
+                        void handleDispatch("police", inc);
                       }}
-                      disabled={isDispatching}
+                      disabled={isDispatching || Boolean(inc.assigned_to && inc.assigned_to !== TEST_OPERATOR)}
                       className="flex-1 text-[9px] font-bold bg-red-600 hover:bg-red-700 text-white py-1 rounded transition-colors disabled:opacity-50"
                     >
                       {isLocalTestApi ? "TEST Dispatch" : "Dispatch"}
                     </button>
                     <button
-                    disabled
-                    title="Citizen messaging is not connected to this dashboard"
-                    onClick={(e) => { e.stopPropagation(); showToast("Messaging service is not connected.", "error"); }}
-                    className="flex-1 text-[9px] font-bold bg-neutral-800 text-neutral-500 py-1 rounded transition-colors disabled:cursor-not-allowed"
+                      onClick={() => openIncidentChat(inc.id)}
+                      className="flex-1 text-[9px] font-bold bg-neutral-800 text-neutral-200 py-1 rounded transition-colors hover:bg-neutral-700"
                     >
-                    Messaging unavailable
+                      Open chat
                     </button>
+                    {!inc.assigned_to && !CLEARED_STATUSES.has(inc.status) && (
+                      <button
+                        onClick={() => {
+                          selectIncident(inc.id);
+                          void handleClaimIncident(inc);
+                        }}
+                        disabled={isClaiming}
+                        className="flex-1 text-[9px] font-bold bg-amber-900/70 text-amber-100 py-1 rounded transition-colors hover:bg-amber-800 disabled:opacity-50"
+                      >
+                        Take case
+                      </button>
+                    )}
+                    {inc.assigned_to && (
+                      <span className="self-center text-[8px] text-neutral-400" title={`Case owner: ${inc.assigned_to}`}>
+                        {inc.assigned_to === TEST_OPERATOR ? "You own this" : `Owned: ${inc.assigned_to}`}
+                      </span>
+                    )}
                   </div>
-                </div>
+                </article>
               ))}
 
               {visibleIncidents.length === 0 && (
@@ -959,42 +1101,108 @@ export default function DashboardPage() {
             <div className="p-6">
               <div className="flex items-center gap-4 mb-6">
                 <div className="w-16 h-16 rounded-full bg-neutral-800 flex items-center justify-center text-white text-xl font-bold">
-                  {(topIncident?.title?.split("—")[1]?.trim() || "UC")[0]}
+                  {reporterInitials}
                 </div>
                 <div>
                   <h2 className="text-white font-bold text-lg">{topIncident?.user_name || "Unknown Citizen"}</h2>
-                  <p className="text-neutral-400 text-sm">ID: {topIncident?.user_id?.substring(0,8) || "ANON-8472"}</p>
+                  <p className="text-neutral-400 text-sm break-all">ID: {topIncident?.user_id || "Not available"}</p>
                 </div>
               </div>
               
-              <div className="space-y-4">
-                <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Medical History</p>
-                  <p className="text-amber-300 text-sm">Masked. Authorized reveal and access audit are not connected.</p>
-                </div>
-                <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Emergency Contacts</p>
-                  <p className="text-neutral-400 text-sm">Contact data is not available from the incident feed.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-3">
+                <section className="grid grid-cols-2 gap-3">
                   <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Medical Details</p>
-                    <p className="text-amber-300 font-bold text-sm">Masked</p>
+                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Account role</p>
+                    <p className="text-white text-sm">{reporterProfile?.user_role || "Citizen"}</p>
                   </div>
                   <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Status</p>
-                    <p className="text-neutral-300 font-bold text-sm">{topIncident?.severity_confidence === "verified" ? "Verified" : "Unverified"}</p>
+                    <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Incident</p>
+                    <p className="text-white text-sm font-mono">{topIncident?.id || "Unavailable"}</p>
                   </div>
-                </div>
+                </section>
+                <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-2">Contact details</p>
+                  {reporterPhone ? (
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-neutral-300">{reporterPhone}</span>
+                      {isLocalTestApi ? (
+                        <span className="text-[10px] text-amber-300">Calls disabled in TEST</span>
+                      ) : (
+                        <a href={`tel:${encodeURIComponent(reporterPhone)}`} className="rounded bg-emerald-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
+                          Call citizen
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-neutral-400">Phone number not provided by this incident feed.</p>
+                  )}
+                  <p className="mt-2 text-sm text-neutral-300">{reporterEmail || "Email not provided"}</p>
+                  {reporterProfile?.address && (
+                    <p className="mt-2 text-sm text-neutral-300">{reporterProfile.address}</p>
+                  )}
+                  {isLocalTestApi && !reporterPhone && (
+                    <p className="mt-2 text-[10px] text-amber-300">TEST records do not contain registered contact details; no calls can be placed.</p>
+                  )}
+                </section>
+                <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-2">Emergency contacts</p>
+                  {emergencyContacts.length > 0 ? (
+                    <ul className="space-y-2">
+                      {emergencyContacts.map((contact, index) => (
+                        <li key={`${contact.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="text-neutral-200">
+                            {contact.name}{contact.relation ? ` · ${contact.relation}` : ""}
+                            {contact.phone ? <span className="block text-xs text-neutral-500">{contact.phone}</span> : null}
+                          </span>
+                          {contact.phone && !isLocalTestApi && (
+                            <a href={`tel:${encodeURIComponent(contact.phone)}`} className="text-xs font-bold text-emerald-300 hover:text-emerald-200">Call</a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-neutral-400">No emergency contacts were included with this report.</p>
+                  )}
+                </section>
+                <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Medical information</p>
+                  <p className="text-amber-300 text-sm">Masked. An authorized, audited reveal is not available in this TEST workflow.</p>
+                </section>
+                <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+                  <p className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest mb-1">Current report</p>
+                  <p className="text-neutral-200 text-sm">{topIncident?.title || "No report selected"}</p>
+                  <p className="mt-1 text-xs text-neutral-400">{topIncident?.location_name || "Location unavailable"}</p>
+                </section>
               </div>
             </div>
             
-            <div className="p-4 bg-black border-t border-neutral-800">
-              <button 
-                onClick={() => setIsProfileModalOpen(false)}
-                className="w-full py-2.5 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700 transition"
+            <div className="p-4 bg-black border-t border-neutral-800 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileModalOpen(false);
+                  if (topIncident) openIncidentChat(topIncident.id);
+                }}
+                className="flex-1 py-2.5 rounded-lg bg-red-700 text-white font-bold hover:bg-red-600 transition"
+                disabled={!topIncident}
               >
-                Close Profile
+                <MessageSquare size={14} className="mr-2 inline" /> Chat about incident
+              </button>
+              {topIncident?.user_id && (
+                <button
+                  type="button"
+                  onClick={() => openFullReporterProfile(topIncident)}
+                  className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-xs font-bold text-neutral-200 transition hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500"
+                >
+                  View full profile
+                </button>
+              )}
+              <button 
+                type="button"
+                onClick={() => setIsProfileModalOpen(false)}
+                className="px-4 py-2.5 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700 transition"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import { eawsApi, isLocalTestApi } from "@/lib/api";
 import SentinelShell from "@/components/SentinelShell";
 import {
@@ -165,7 +164,11 @@ function Field({ label, value, wide }: { label: string; value: string; wide?: bo
 function CitizenProfileContent() {
   const searchParams = useSearchParams();
   const citizenId = searchParams.get("id");
-  const [profile, setProfile] = useState(MOCK_PROFILES["c-001"]);
+  const [profile, setProfile] = useState<any>(citizenId ? null : MOCK_PROFILES["c-001"]);
+  const [profileLoadState, setProfileLoadState] = useState<"loading" | "ready" | "unavailable" | "error">(
+    citizenId ? "loading" : "ready"
+  );
+  const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -174,40 +177,117 @@ function CitizenProfileContent() {
   const [activeCitizenId, setActiveCitizenId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!citizenId) return;
-
-    // Check offline dictionary match
-    const norm = citizenId.toLowerCase();
-    const mockKey = Object.keys(MOCK_PROFILES).find(key =>
-      key.toLowerCase() === norm ||
-      MOCK_PROFILES[key].citizen_id.toLowerCase() === norm ||
-      MOCK_PROFILES[key].full_name.toLowerCase().includes(norm)
-    );
-
-    if (mockKey) {
-      const matched = MOCK_PROFILES[mockKey];
-      setProfile(matched);
-      setMessages(matched.initial_messages || []);
-      setActiveCitizenId(mockKey);
+    if (!citizenId) {
+      setProfile(MOCK_PROFILES["c-001"]);
+      setProfileLoadState("ready");
+      setProfileLoadError(null);
+      setActiveCitizenId(null);
+      setMessages(MOCK_PROFILES["c-001"].initial_messages || []);
+      return;
     }
 
-    // Try fetching live profile from Supabase
+    const requestedUserId = citizenId;
+    let cancelled = false;
+    setProfile(null);
+    setProfileLoadState("loading");
+    setProfileLoadError(null);
+    setActiveCitizenId(null);
+    setMessages([]);
+
     async function load() {
       try {
-        const { data } = await supabase.from("profiles").select("*").eq("user_id", citizenId).single();
-        if (data) {
-          setActiveCitizenId(citizenId);
-          setProfile((prev: any) => ({
-            ...prev,
-            ...data,
-            blood_type: data.blood_group || data.blood_type || prev.blood_type,
-            chronic_conditions: data.chronic_illnesses || data.chronic_conditions || prev.chronic_conditions,
-            current_medications: data.medical_notes || data.current_medications || prev.current_medications,
-          }));
+        const [profileResult, incidentResult] = await Promise.allSettled([
+          eawsApi.getCitizenProfile(requestedUserId),
+          eawsApi.getLiveIncidents(),
+        ]);
+        if (cancelled) return;
+
+        const storedProfile =
+          profileResult.status === "fulfilled" &&
+          profileResult.value?.user_id === requestedUserId
+            ? profileResult.value
+            : null;
+        const matchingIncidents =
+          incidentResult.status === "fulfilled"
+            ? incidentResult.value.filter((incident) => incident.user_id === requestedUserId)
+            : [];
+        const latestIncident = [...matchingIncidents].sort(
+          (left, right) =>
+            new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+        )[0];
+        const incidentProfile = latestIncident?.reporter_profile;
+        const sourceProfile: Record<string, unknown> | null = storedProfile
+          ? {
+              ...storedProfile,
+              profile_details_available: storedProfile.profile_details_available !== false,
+            }
+          : incidentProfile
+            ? {
+                ...incidentProfile,
+                user_id: requestedUserId,
+                full_name: incidentProfile.full_name || latestIncident?.user_name,
+                profile_details_available: true,
+              }
+            : latestIncident?.user_name
+              ? {
+                  user_id: requestedUserId,
+                  full_name: latestIncident.user_name,
+                  profile_details_available: false,
+                }
+              : null;
+
+        if (!sourceProfile) {
+          if (profileResult.status === "rejected" && incidentResult.status === "rejected") {
+            throw new Error("Could not load this citizen record from the profile service or incident feed.");
+          }
+          setProfileLoadState("unavailable");
+          return;
         }
-      } catch (_) {}
+
+        const activeIncident = matchingIncidents.find(
+          (incident) => !["resolved", "dismissed", "retracted"].includes(incident.status)
+        );
+        const incidentHistory = matchingIncidents.map((incident) => ({
+          id: incident.id,
+          date: incident.created_at ? new Date(incident.created_at).toLocaleString() : "Unknown date",
+          type: incident.category,
+          severity: String(incident.severity || "MEDIUM").toUpperCase(),
+          outcome: incident.outcome || incident.status,
+        }));
+        const resolvedProfile = {
+          ...sourceProfile,
+          full_name:
+            (typeof sourceProfile.full_name === "string" && sourceProfile.full_name) ||
+            latestIncident?.user_name ||
+            "Name unavailable",
+          citizen_id:
+            (typeof sourceProfile.citizen_id === "string" && sourceProfile.citizen_id) ||
+            requestedUserId,
+          phone: typeof sourceProfile.phone === "string" ? sourceProfile.phone : "",
+          emergency_contacts: Array.isArray(sourceProfile.emergency_contacts)
+            ? sourceProfile.emergency_contacts
+            : [],
+          profile_details_available: sourceProfile.profile_details_available,
+          incident_history: incidentHistory,
+          active_incident_id: activeIncident?.id || null,
+          active_incident_note: activeIncident?.title || null,
+        };
+        setProfile(resolvedProfile);
+        setActiveCitizenId(requestedUserId);
+        setMessages([]);
+        setProfileLoadState("ready");
+      } catch (error) {
+        if (cancelled) return;
+        setProfileLoadError(
+          error instanceof Error ? error.message : "The citizen profile could not be loaded."
+        );
+        setProfileLoadState("error");
+      }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [citizenId]);
 
   // Load and poll messages when chat is open
@@ -230,6 +310,34 @@ function CitizenProfileContent() {
     }
   }, [messages, isChatOpen]);
 
+  if (profileLoadState === "loading") {
+    return (
+      <SentinelShell title="Citizen Profile" subtitle="Loading the requested citizen record">
+        <div className="flex h-full items-center justify-center bg-[#0a0a0a] p-6">
+          <p className="text-sm text-neutral-300">Loading profile for {citizenId}…</p>
+        </div>
+      </SentinelShell>
+    );
+  }
+
+  if (profileLoadState === "unavailable" || profileLoadState === "error" || !profile) {
+    return (
+      <SentinelShell title="Citizen Profile" subtitle="The requested identity could not be verified">
+        <div className="flex h-full items-center justify-center bg-[#0a0a0a] p-6">
+          <section className="max-w-lg rounded-xl border border-amber-500/30 bg-[#111] p-6">
+            <h2 className="text-base font-bold text-white">
+              {profileLoadState === "error" ? "Profile lookup failed" : "Profile unavailable"}
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-neutral-300">
+              {profileLoadError ||
+                `No citizen profile is linked to reporter ID ${citizenId}. No other citizen record was opened.`}
+            </p>
+          </section>
+        </div>
+      </SentinelShell>
+    );
+  }
+
   const p = profile;
 
   return (
@@ -243,10 +351,16 @@ function CitizenProfileContent() {
               <p className="text-neutral-500 text-xs mt-0.5">Profile accessible from Incidents, Dispatch Detail &amp; Community</p>
             </div>
             <div className="flex gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/25 px-3 py-1.5 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                Verified
-              </span>
+              {p.is_verified === true || p.verified === true ? (
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/25 px-3 py-1.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                  Verified
+                </span>
+              ) : (
+                <span className="inline-flex items-center text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/25 px-3 py-1.5 rounded-full">
+                  Verification unknown
+                </span>
+              )}
               {p.active_incident_id && (
                 <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/25 px-3 py-1.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
@@ -264,6 +378,11 @@ function CitizenProfileContent() {
               <div>
                 <p className="text-base font-bold text-white tracking-tight">Identity</p>
                 <p className="text-[11px] text-neutral-500 mt-0.5">Primary citizen record and contact access</p>
+                {!p.profile_details_available && (
+                  <p className="mt-2 text-[11px] text-amber-300">
+                    Showing identity from this reporter&apos;s incident only. Contact and full profile details are not available.
+                  </p>
+                )}
               </div>
 
               {/* avatar + name */}
@@ -288,7 +407,7 @@ function CitizenProfileContent() {
                 </div>
                 <div className="bg-[#181818] border border-white/[0.06] rounded-lg p-3">
                   <p className="text-[9px] font-bold tracking-[0.14em] text-neutral-500 uppercase mb-1.5">Phone</p>
-                  <p className="text-[11px] font-mono font-bold text-white leading-snug">{p.phone}</p>
+                  <p className="text-[11px] font-mono font-bold text-white leading-snug">{p.phone || "Not available"}</p>
                 </div>
               </div>
 
@@ -299,7 +418,7 @@ function CitizenProfileContent() {
                   <span className="text-[10px] text-neutral-500 font-medium">{p.emergency_contacts?.length || 0} contacts</span>
                 </div>
                 <div className="space-y-2">
-                  {p.emergency_contacts?.map((c: any) => (
+                  {p.emergency_contacts?.length ? p.emergency_contacts.map((c: any) => (
                     <div key={c.name} className="flex items-center justify-between bg-[#181818] border border-white/[0.04] rounded-lg px-3.5 py-3">
                       <div>
                         <p className="text-[12px] font-semibold text-white">{c.name}</p>
@@ -311,7 +430,9 @@ function CitizenProfileContent() {
                         <a href={`tel:${c.phone}`} className="text-[11px] font-mono text-neutral-400 hover:text-white transition-colors">{c.phone}</a>
                       )}
                     </div>
-                  )) || <div className="text-[11px] text-neutral-600 italic py-2">No contacts registered</div>}
+                  )) : <div className="text-[11px] text-neutral-600 italic py-2">
+                    {p.profile_details_available ? "No contacts registered" : "Contact details unavailable"}
+                  </div>}
                 </div>
               </div>
 
@@ -324,10 +445,14 @@ function CitizenProfileContent() {
                   <button disabled title="Calls are disabled in TEST mode" className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] border border-white/[0.08] text-amber-300 text-[10px] font-bold disabled:cursor-not-allowed">
                     <Phone size={13} /> Calls disabled in TEST
                   </button>
-                ) : (
+                ) : p.phone ? (
                   <a href={`tel:${p.phone}`} className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] hover:bg-[#252525] border border-white/[0.08] text-neutral-300 text-[11px] font-bold transition-all duration-150 flex items-center justify-center gap-2">
                     <Phone size={13} /> Call Contact
                   </a>
+                ) : (
+                  <button disabled title="No verified phone number is available for this reporter" className="flex-1 py-2.5 rounded-lg bg-[#1e1e1e] border border-white/[0.08] text-neutral-500 text-[11px] font-bold disabled:cursor-not-allowed">
+                    <Phone size={13} /> Phone unavailable
+                  </button>
                 )}
               </div>
             </div>
@@ -348,7 +473,7 @@ function CitizenProfileContent() {
                 <p className="text-[11px] text-neutral-500 mb-4">Past incidents linked to this citizen record</p>
 
                 <div className="space-y-2.5">
-                  {p.incident_history?.map((inc: any) => {
+                  {p.incident_history?.length ? p.incident_history.map((inc: any) => {
                     const s = SEV[inc.severity] ?? SEV.MEDIUM;
                     return (
                       <div key={inc.id} className="bg-[#181818] border border-white/[0.05] rounded-xl p-4 hover:border-white/10 transition-colors">
@@ -367,7 +492,7 @@ function CitizenProfileContent() {
                         </div>
                       </div>
                     );
-                  }) || <div className="text-[11px] text-neutral-600 italic py-2">No past incident record</div>}
+                  }) : <div className="text-[11px] text-neutral-600 italic py-2">No incident record found for this citizen</div>}
                 </div>
 
                 <div className="flex gap-2.5 mt-4">
@@ -400,7 +525,9 @@ function CitizenProfileContent() {
                         <p className="text-[13px] font-bold text-white">{p.device_model || "N/A"}</p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/25 px-2.5 py-1 rounded-md">Online</span>
+                    <span className="text-[10px] font-bold text-neutral-400 bg-neutral-500/10 border border-neutral-500/25 px-2.5 py-1 rounded-md">
+                      {p.device_status || "Status unavailable"}
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Sun, Moon, Search, Star, Route, X, MapPin, Navigation, Crosshair, Layers } from "lucide-react";
 import type { AgencyUnit, Incident } from "@/lib/models";
+import type { Marker as LeafletMarker } from "leaflet";
 
 // Helper to calculate distance in KM (Haversine formula)
 function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -40,8 +41,24 @@ interface MapProps {
   zoom?: number;
   incidents?: Incident[];
   units?: AgencyUnit[];
+  selectedIncidentId?: string | null;
   onAmbulanceMove?: (coords: [number, number]) => void;
   onSelectIncident?: (incidentId: string) => void;
+  onOpenReporterProfile?: (incidentId: string) => void;
+  onOpenIncidentChat?: (incidentId: string) => void;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
 }
 
 export default function Map({
@@ -49,14 +66,18 @@ export default function Map({
   zoom = 12,
   incidents = [],
   units = [],
+  selectedIncidentId = null,
   onAmbulanceMove,
   onSelectIncident,
+  onOpenReporterProfile,
+  onOpenIncidentChat,
 }: MapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const LRef = useRef<any>(null);
 
   const [mapType, setMapType] = useState<"dark" | "satellite">("dark");
+  const [mapReady, setMapReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<typeof ACCRA_LOCATIONS>([]);
   const [selectedPlace, setSelectedPlace] = useState<typeof ACCRA_LOCATIONS[0] | null>(null);
@@ -67,6 +88,16 @@ export default function Map({
   const routeLayerRef = useRef<any>(null);
   const searchMarkerRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
+  const incidentMarkersRef = useRef(new globalThis.Map<string, LeafletMarker>());
+  const onSelectIncidentRef = useRef(onSelectIncident);
+  const onOpenReporterProfileRef = useRef(onOpenReporterProfile);
+  const onOpenIncidentChatRef = useRef(onOpenIncidentChat);
+
+  useEffect(() => {
+    onSelectIncidentRef.current = onSelectIncident;
+    onOpenReporterProfileRef.current = onOpenReporterProfile;
+    onOpenIncidentChatRef.current = onOpenIncidentChat;
+  }, [onOpenIncidentChat, onOpenReporterProfile, onSelectIncident]);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -109,6 +140,7 @@ export default function Map({
         routeLayerRef.current = L.featureGroup().addTo(map);
 
         mapInstanceRef.current = map;
+        setMapReady(true);
       }
     }
 
@@ -144,7 +176,7 @@ export default function Map({
         { maxZoom: 19, subdomains: "abcd" }
       ).addTo(map);
     }
-  }, [mapType]);
+  }, [mapType, mapReady]);
 
   // Handle Search Queries
   useEffect(() => {
@@ -164,17 +196,19 @@ export default function Map({
     const map = mapInstanceRef.current;
     const L = LRef.current;
     const layer = incidentLayerRef.current;
-    if (!map || !L || !layer) return;
+    if (!mapReady || !map || !L || !layer) return;
 
     layer.clearLayers();
+    incidentMarkersRef.current.clear();
 
     incidents.forEach((inc) => {
-      const lat = inc.latitude || (inc as any).lat;
-      const lng = inc.longitude || (inc as any).lng;
-      if (!lat || !lng) return;
+      const lat = inc.latitude ?? (inc as any).lat;
+      const lng = inc.longitude ?? (inc as any).lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
       const isCritical = inc.severity?.toLowerCase() === "critical";
       const isHigh = ["warning", "high"].includes(inc.severity?.toLowerCase());
+      const isSelected = inc.id === selectedIncidentId;
       const glowColor = isCritical ? "#ef4444" : isHigh ? "#f59e0b" : "#3b82f6";
       const badgeColor = isCritical ? "bg-red-500" : isHigh ? "bg-amber-500" : "bg-blue-500";
       const iconSymbol =
@@ -190,7 +224,7 @@ export default function Map({
         <div class="relative flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
           <span class="absolute w-8 h-8 rounded-full animate-ping opacity-75" style="background-color: ${glowColor}40;"></span>
           <span class="absolute w-6 h-6 rounded-full" style="background-color: ${glowColor}30;"></span>
-          <div class="relative w-7 h-7 rounded-full flex items-center justify-center text-xs shadow-lg border-2 border-white/80 font-bold ${badgeColor} text-white">
+          <div class="relative w-7 h-7 rounded-full flex items-center justify-center text-xs shadow-lg border-2 ${isSelected ? "border-white ring-4 ring-white/40 scale-125" : "border-white/80"} font-bold ${badgeColor} text-white">
             ${iconSymbol}
           </div>
           <div class="absolute -bottom-5 bg-black/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded shadow whitespace-nowrap border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -207,20 +241,27 @@ export default function Map({
       });
 
       const marker = L.marker([lat, lng], { icon: customIcon }).addTo(layer);
+      incidentMarkersRef.current.set(inc.id, marker);
 
       const popupHtml = `
         <div class="p-3 text-zinc-100 bg-[#121215] rounded-xl border border-white/10 min-w-[220px]">
           <div class="flex items-center justify-between gap-2 mb-1.5">
-            <span class="font-mono text-xs font-black text-white">${inc.id}</span>
+            <span class="font-mono text-xs font-black text-white">${escapeHtml(inc.id)}</span>
             <span class="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase" style="background: ${glowColor}20; color: ${glowColor}; border: 1px solid ${glowColor}40;">
-              ${inc.severity}
+              ${escapeHtml(inc.severity)}
             </span>
           </div>
-          <h4 class="text-xs font-bold text-white mb-1">${inc.title || "Emergency Incident"}</h4>
-          <p class="text-[11px] text-zinc-400 mb-2">${inc.description || inc.location_name || "Accra Metro"}</p>
+          <h4 class="text-xs font-bold text-white mb-1">${escapeHtml(inc.title || "Emergency Incident")}</h4>
+          <p class="text-[11px] text-zinc-400 mb-2">${escapeHtml(inc.description || inc.location_name || "Location unavailable")}</p>
           <div class="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-            <span>${inc.user_name || "Citizen Reporter"}</span>
-            <span class="text-emerald-400 font-bold">${inc.status.replaceAll("_", " ")}</span>
+            <span>${escapeHtml(inc.user_name || "Citizen Reporter")}</span>
+            <span class="text-emerald-400 font-bold">${escapeHtml(inc.status.replaceAll("_", " "))}</span>
+          </div>
+          <p class="mt-1 text-[10px] text-zinc-500">${escapeHtml(inc.location_name || "No location supplied")}</p>
+          <p class="mt-1 text-[10px] text-zinc-400">${escapeHtml(inc.assigned_to ? `Working: ${inc.assigned_to}` : "Unclaimed")}</p>
+          <div class="mt-3 flex gap-2 border-t border-white/10 pt-2">
+            <button type="button" data-incident-action="profile" class="flex-1 rounded bg-zinc-800 px-2 py-1.5 text-[10px] font-bold text-white hover:bg-zinc-700">Reporter profile</button>
+            <button type="button" data-incident-action="chat" class="flex-1 rounded bg-red-700 px-2 py-1.5 text-[10px] font-bold text-white hover:bg-red-600">Open chat</button>
           </div>
         </div>
       `;
@@ -231,17 +272,45 @@ export default function Map({
       });
 
       marker.on("click", () => {
-        if (onSelectIncident) onSelectIncident(inc.id);
+        onSelectIncidentRef.current?.(inc.id);
+      });
+      marker.on("popupopen", (event: { popup: { getElement: () => HTMLElement | null } }) => {
+        const popupElement = event.popup.getElement();
+        const actions = popupElement?.querySelectorAll<HTMLButtonElement>("[data-incident-action]");
+        actions?.forEach((button) => {
+          button.addEventListener("click", (clickEvent: MouseEvent) => {
+            clickEvent.stopPropagation();
+            L.DomEvent.stopPropagation(clickEvent);
+            if (button.dataset.incidentAction === "profile") {
+              onOpenReporterProfileRef.current?.(inc.id);
+            } else if (button.dataset.incidentAction === "chat") {
+              onOpenIncidentChatRef.current?.(inc.id);
+            }
+          });
+        });
       });
     });
-  }, [incidents, onSelectIncident]);
+    if (selectedIncidentId) {
+      const selectedMarker = incidentMarkersRef.current.get(selectedIncidentId);
+      if (selectedMarker) {
+        map.flyTo(selectedMarker.getLatLng(), Math.max(map.getZoom(), 15), { duration: 0.7 });
+        selectedMarker.openPopup();
+      }
+    }
+  }, [incidents, mapReady, selectedIncidentId]);
+
+  const selectedWithoutLocation = incidents.find(
+    (incident) =>
+      incident.id === selectedIncidentId &&
+      (!Number.isFinite(incident.latitude) || !Number.isFinite(incident.longitude)),
+  );
 
   // Render Agency Units onto Leaflet Map
   useEffect(() => {
     const map = mapInstanceRef.current;
     const L = LRef.current;
     const layer = unitLayerRef.current;
-    if (!map || !L || !layer) return;
+    if (!mapReady || !map || !L || !layer) return;
 
     layer.clearLayers();
 
@@ -279,7 +348,7 @@ export default function Map({
         </div>
       `, { closeButton: false });
     });
-  }, [units]);
+  }, [mapReady, units]);
 
   // Select place from search
   function handleSelectPlace(place: typeof ACCRA_LOCATIONS[0]) {
@@ -337,6 +406,11 @@ export default function Map({
     <div className="relative w-full h-full bg-[#08080a] overflow-hidden select-none">
       {/* Map Container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
+      {selectedWithoutLocation && (
+        <div className="absolute right-4 top-4 z-20 max-w-72 rounded-lg border border-amber-700/60 bg-[#17130b]/95 px-3 py-2 text-[11px] text-amber-200 shadow-xl" role="status">
+          {selectedWithoutLocation.id} has no coordinates, so it cannot be pinned on the map.
+        </div>
+      )}
 
       {/* Floating Tactical Search Pill */}
       <div className="absolute top-4 left-4 z-20 w-80">

@@ -154,10 +154,14 @@ export default function SentinelShell({
   /* ── Dispatch Global Messages Inbox State ── */
   const [showInboxModal, setShowInboxModal] = useState(false);
   const [threads, setThreads] = useState<any[]>([]);
-  const [selectedCitizenId, setSelectedCitizenId] = useState<string>("c-005");
+  const [selectedThreadId, setSelectedThreadId] = useState<string>(
+    isLocalTestApi ? "" : "c-005",
+  );
   const [activeMsgs, setActiveMsgs] = useState<any[]>([]);
   const [activeThreadOwner, setActiveThreadOwner] = useState<any>(null);
   const [newMsgText, setNewMsgText] = useState("");
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [mediaUrlInput, setMediaUrlInput] = useState("");
   const [showMediaPrompt, setShowMediaPrompt] = useState(false);
   const [unreadTotal, setUnreadTotal] = useState<number>(0);
@@ -207,28 +211,45 @@ export default function SentinelShell({
 
   /* ── Global Messages Polling & Notification Toast ── */
   useEffect(() => {
-    if (isLocalTestApi) return;
     const checkMessages = async () => {
       try {
-        const tList = await eawsApi.getThreadSummaries();
+        const tList = isLocalTestApi
+          ? await eawsApi.getTestMessageThreads()
+          : await eawsApi.getThreadSummaries();
         if (tList && Array.isArray(tList)) {
           setThreads(tList);
           const totalUnread = tList.reduce((acc, t) => acc + (t.unread_count || 0), 0);
           setUnreadTotal(totalUnread);
+          if (isLocalTestApi && tList.length > 0) {
+            setSelectedThreadId((selectedId) =>
+              tList.some((thread) => thread.incident_id === selectedId)
+                ? selectedId
+                : tList[0].incident_id,
+            );
+          }
 
           // Check if latest message is new from a citizen
           const newestThread = tList[0];
           if (newestThread && newestThread.last_message) {
             const last = newestThread.last_message;
-            if (last.sender === "citizen" && last.id !== prevLastMsgIdRef.current) {
+            if (
+              (last.sender === "citizen" || last.sender_role === "citizen") &&
+              last.id !== prevLastMsgIdRef.current
+            ) {
               prevLastMsgIdRef.current = last.id;
-              const name = MOCK_NAMES[newestThread.citizen_id] || newestThread.citizen_id;
+              const name =
+                newestThread.citizen_name ||
+                MOCK_NAMES[newestThread.citizen_id] ||
+                newestThread.citizen_id;
               setToastAlert({ name, text: last.text || "Sent an image/media attachment" });
               setTimeout(() => setToastAlert(null), 5000);
             }
           }
         }
-      } catch { /* silent fallback */ }
+      } catch (error) {
+        console.error("Could not load message inbox:", error);
+        setInboxError("Messages are unavailable. Check the TEST API connection and retry.");
+      }
     };
 
     checkMessages();
@@ -238,25 +259,34 @@ export default function SentinelShell({
 
   /* ── Load conversation when a thread is selected inside Inbox Modal ── */
   useEffect(() => {
-    if (isLocalTestApi || !showInboxModal || !selectedCitizenId) return;
+    if (!showInboxModal || !selectedThreadId) return;
     const fetchThreadMsgs = () => {
-      eawsApi.getMessages(selectedCitizenId).then(res => {
+      const result = isLocalTestApi
+        ? eawsApi.getTestIncidentMessages(selectedThreadId)
+        : eawsApi.getMessages(selectedThreadId);
+      result.then(res => {
         if (Array.isArray(res)) {
           setActiveMsgs(res);
+          if (isLocalTestApi) setActiveThreadOwner(null);
         } else if (res && (res as any).messages) {
           setActiveMsgs((res as any).messages);
           setActiveThreadOwner((res as any).thread_owner || null);
         }
-      }).catch(() => {});
+        setInboxError(null);
+      }).catch((error) => {
+        console.error("Could not load selected message thread:", error);
+        setInboxError("This conversation could not be loaded. Try again.");
+      });
     };
     fetchThreadMsgs();
     const interval = setInterval(fetchThreadMsgs, 1000);
     return () => clearInterval(interval);
-  }, [showInboxModal, selectedCitizenId]);
+  }, [showInboxModal, selectedThreadId]);
 
   const handleClaimThread = async () => {
+    if (isLocalTestApi) return;
     try {
-      const owner = await eawsApi.claimThread(selectedCitizenId);
+      const owner = await eawsApi.claimThread(selectedThreadId);
       setActiveThreadOwner(owner);
       const tList = await eawsApi.getThreadSummaries();
       setThreads(tList);
@@ -293,24 +323,60 @@ export default function SentinelShell({
     e.preventDefault();
     const text = newMsgText.trim();
     const media = mediaUrlInput.trim();
-    if (!text && !media) return;
-    setNewMsgText("");
-    setMediaUrlInput("");
-    setShowMediaPrompt(false);
+    if (isSendingMessage || (!text && !media)) return;
+    setIsSendingMessage(true);
+    setInboxError(null);
+    let messageSent = false;
     try {
-      const type = media ? (media.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image') : 'text';
-      await eawsApi.sendMessage(selectedCitizenId, text, type, media || undefined);
-      const updated = await eawsApi.getMessages(selectedCitizenId);
+      if (isLocalTestApi) {
+        if (!text || media) {
+          setInboxError("TEST inbox supports text messages only.");
+          return;
+        }
+        const message = await eawsApi.sendIncidentMessage(
+          selectedThreadId,
+          text,
+          crypto.randomUUID(),
+        );
+        messageSent = true;
+        setActiveMsgs((current) =>
+          current.some((existing) => existing.id === message.id)
+            ? current
+            : [...current, message],
+        );
+      } else {
+        const type = media
+          ? media.match(/\.(mp4|mov|webm)$/i)
+            ? "video"
+            : "image"
+          : "text";
+        await eawsApi.sendMessage(selectedThreadId, text, type, media || undefined);
+        messageSent = true;
+      }
+      setNewMsgText("");
+      setMediaUrlInput("");
+      setShowMediaPrompt(false);
+      const updated = isLocalTestApi
+        ? await eawsApi.getTestIncidentMessages(selectedThreadId)
+        : await eawsApi.getMessages(selectedThreadId);
       setActiveMsgs(updated);
-    } catch (err) {
-      console.error("Error sending from modal:", err);
+    } catch (error) {
+      console.error("Error sending from modal:", error);
+      setInboxError(
+        messageSent
+          ? "Message was saved, but the thread could not refresh. Reopen it to confirm its history."
+          : "Message was not confirmed. Your draft is still available to retry.",
+      );
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
   const handleDeleteFromModal = async (msgId: string) => {
+    if (isLocalTestApi) return;
     try {
-      await eawsApi.deleteMessage(selectedCitizenId, msgId);
-      const updated = await eawsApi.getMessages(selectedCitizenId);
+      await eawsApi.deleteMessage(selectedThreadId, msgId);
+      const updated = await eawsApi.getMessages(selectedThreadId);
       setActiveMsgs(updated);
     } catch (err) {
       console.error("Error deleting from modal:", err);
@@ -336,6 +402,23 @@ export default function SentinelShell({
     { key: "police",   label: "Police",           color: "text-blue-400",   dot: "bg-blue-500"   },
     { key: "disaster", label: "Disaster",         color: "text-purple-400", dot: "bg-purple-500" },
   ];
+
+  const inboxThreads = isLocalTestApi
+    ? threads.map((thread) => ({
+        ...thread,
+        thread_id: thread.incident_id,
+        display_name: thread.citizen_name,
+      }))
+    : Object.keys(MOCK_NAMES).map((citizenId) => ({
+        thread_id: citizenId,
+        citizen_id: citizenId,
+        display_name: MOCK_NAMES[citizenId],
+        ...threads.find((thread) => thread.citizen_id === citizenId),
+      }));
+  const selectedInboxThread = inboxThreads.find(
+    (thread) => thread.thread_id === selectedThreadId,
+  );
+  const selectedCitizenId = selectedInboxThread?.citizen_id ?? selectedThreadId;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden relative" style={{ background: "var(--sentinel-bg, #080808)" }}>
@@ -504,7 +587,7 @@ export default function SentinelShell({
             className="px-4 py-1.5 bg-amber-950 border-b border-amber-700 text-amber-100 text-[10px] font-bold tracking-wide text-center"
             role="status"
           >
-            TEST MODE — SYNTHETIC DATA ONLY · NO REAL DISPATCH, SMS, CALLS, OR CITIZEN MESSAGES
+            TEST MODE — SYNTHETIC DATA ONLY · NO REAL DISPATCH, SMS, CALLS, OR PUSH
           </div>
         )}
 
@@ -548,10 +631,12 @@ export default function SentinelShell({
 
           {/* GLOBAL DISPATCH MESSAGES INBOX BUTTON */}
           <button
-            onClick={() => setShowInboxModal(true)}
-            disabled={isLocalTestApi}
-            className="relative flex items-center gap-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-white text-[11px] font-bold px-3 py-1.5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={isLocalTestApi ? "Messaging is not implemented in the local test API" : "Open Control Room Messages Inbox"}
+            onClick={() => {
+              setInboxError(null);
+              setShowInboxModal(true);
+            }}
+            className="relative flex items-center gap-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-white text-[11px] font-bold px-3 py-1.5 rounded-md transition-colors"
+            title={isLocalTestApi ? "Open TEST incident conversations" : "Open Control Room Messages Inbox"}
           >
             <MessageSquare size={13} className="text-red-500" />
             <span>Messages</span>
@@ -596,7 +681,11 @@ export default function SentinelShell({
                 </div>
                 <div>
                   <h3 className="text-white font-bold text-sm leading-tight">Control Room Messaging Hub</h3>
-                  <p className="text-[10px] text-neutral-500">Live two-way citizen & dispatch communications</p>
+                  <p className="text-[10px] text-neutral-500">
+                    {isLocalTestApi
+                      ? "TEST ONLY · Incident conversations · No SMS or push"
+                      : "Live two-way citizen & dispatch communications"}
+                  </p>
                 </div>
               </div>
               <button onClick={() => setShowInboxModal(false)} className="p-1.5 rounded-lg bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800 transition-colors">
@@ -609,38 +698,64 @@ export default function SentinelShell({
               {/* Left Panel: Active Citizen Threads List */}
               <div className="w-[300px] border-r border-neutral-800 bg-[#121212] flex flex-col">
                 <div className="p-3 border-b border-neutral-800">
-                  <p className="text-[9px] font-bold tracking-widest text-neutral-500 uppercase">Active Conversations</p>
+                  <p className="text-[9px] font-bold tracking-widest text-neutral-500 uppercase">
+                    {isLocalTestApi ? "TEST incident conversations" : "Active Conversations"}
+                  </p>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                  {Object.keys(MOCK_NAMES).map((cid) => {
-                    const cName = MOCK_NAMES[cid];
-                    const thread = threads.find(t => t.citizen_id === cid);
-                    const isSelected = selectedCitizenId === cid;
+                  {inboxError && (
+                    <p role="alert" className="m-2 rounded-lg border border-red-900/70 bg-red-950/40 p-2 text-[10px] text-red-300">
+                      {inboxError}
+                    </p>
+                  )}
+                  {inboxThreads.length === 0 ? (
+                    <p className="p-4 text-center text-[11px] text-neutral-500">
+                      {isLocalTestApi ? "No TEST conversations are available." : "No conversations are available."}
+                    </p>
+                  ) : inboxThreads.map((thread) => {
+                    const cid = thread.thread_id;
+                    const cName = thread.display_name;
+                    const isSelected = selectedThreadId === cid;
                     const lastMsg = thread?.last_message;
                     const owner = thread?.thread_owner;
                     return (
                       <button
                         key={cid}
-                        onClick={() => setSelectedCitizenId(cid)}
+                        onClick={() => {
+                          setSelectedThreadId(cid);
+                          setInboxError(null);
+                        }}
                         className={`w-full text-left p-3 rounded-xl transition-all flex items-start gap-3 ${
                           isSelected ? "bg-red-600/15 border border-red-500/30 text-white" : "hover:bg-neutral-800/60 text-neutral-400 border border-transparent"
                         }`}
                       >
                         <div className="w-9 h-9 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center font-bold text-xs text-white shrink-0">
-                          {cName.split(" ").map(w => w[0]).slice(0, 2).join("")}
+                          {cName.split(" ").map((word: string) => word[0]).slice(0, 2).join("")}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <p className="text-[12px] font-bold text-white truncate">{cName}</p>
-                            <span className="text-[9px] text-neutral-500">{lastMsg?.time || "Active"}</span>
+                            <span className="text-[9px] text-neutral-500">
+                              {lastMsg?.time
+                                ? new Date(lastMsg.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                : thread.incident_status || "Active"}
+                            </span>
                           </div>
                           <p className="text-[10px] text-neutral-400 truncate mt-0.5">
-                            {lastMsg ? (lastMsg.is_deleted ? "This message was deleted" : lastMsg.text || "Media attached") : "No messages yet"}
+                            {lastMsg
+                              ? lastMsg.is_deleted
+                                ? "This message was deleted"
+                                : lastMsg.text || lastMsg.content || "Media attached"
+                              : thread.incident_title || "No messages yet"}
                           </p>
                           <div className="mt-1 flex items-center gap-1">
                             {owner ? (
                               <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
                                 Assigned: {owner.operator_name?.split(" ")[1] || owner.operator_name || "Operator"}
+                              </span>
+                            ) : isLocalTestApi ? (
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">
+                                {thread.incident_id}
                               </span>
                             ) : (
                               <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
@@ -661,30 +776,36 @@ export default function SentinelShell({
                 <div className="px-4 py-3 border-b border-neutral-800 bg-[#121212] flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center font-bold text-xs text-white">
-                      {(MOCK_NAMES[selectedCitizenId] || selectedCitizenId).split(" ").map(w => w[0]).slice(0, 2).join("")}
+                      {(selectedInboxThread?.display_name || selectedCitizenId || "TEST").split(" ").map((w: string) => w[0]).slice(0, 2).join("")}
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="text-white font-bold text-xs">{MOCK_NAMES[selectedCitizenId] || selectedCitizenId}</p>
+                        <p className="text-white font-bold text-xs">{selectedInboxThread?.display_name || selectedCitizenId || "Select a conversation"}</p>
                         {activeThreadOwner ? (
                           <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
                             Assigned to: {activeThreadOwner.operator_name} ({activeThreadOwner.agency || "Dispatch"})
                           </span>
                         ) : (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">
-                            UNASSIGNED
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            {isLocalTestApi ? selectedInboxThread?.incident_id || "TEST" : "UNASSIGNED"}
                           </span>
                         )}
                       </div>
-                      <p className="text-[9px] text-green-400 font-semibold">Online · Citizen Direct Line</p>
+                      <p className="text-[9px] text-green-400 font-semibold">
+                        {isLocalTestApi
+                          ? selectedInboxThread?.incident_title || "TEST incident"
+                          : "Online · Citizen Direct Line"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleClaimThread}
-                      className="text-[10px] font-bold text-white bg-red-600 hover:bg-red-500 px-3 py-1 rounded-lg transition-colors shadow-md shadow-red-900/30"
+                      disabled={isLocalTestApi}
+                      title={isLocalTestApi ? "TEST uses one synthetic operator identity" : undefined}
+                      className="text-[10px] font-bold text-white bg-red-600 hover:bg-red-500 px-3 py-1 rounded-lg transition-colors shadow-md shadow-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {activeThreadOwner ? "Reassign to Me" : "Claim Thread"}
+                      {isLocalTestApi ? "Single TEST operator" : activeThreadOwner ? "Reassign to Me" : "Claim Thread"}
                     </button>
                     <button
                       onClick={() => router.push(`/citizen?id=${selectedCitizenId}`)}
@@ -697,19 +818,23 @@ export default function SentinelShell({
 
                 {/* Messages List */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col">
-                  {activeMsgs.length === 0 ? (
+                  {!selectedThreadId ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-neutral-600 text-xs text-center">Select a conversation to view its history.</p>
+                    </div>
+                  ) : activeMsgs.length === 0 ? (
                     <div className="flex-1 flex items-center justify-center">
                       <p className="text-neutral-600 text-xs text-center">No messages in thread yet. Type a message below to start.</p>
                     </div>
                   ) : (
                     activeMsgs.map((m: any, i: number) => (
-                      <div key={m.id || i} className={`group relative flex flex-col max-w-[80%] ${m.sender === "operator" ? "ml-auto items-end" : "mr-auto items-start"}`}>
-                        {m.sender === "operator" && (
+                      <div key={m.id || i} className={`group relative flex flex-col max-w-[80%] ${(m.sender_role === "operator" || m.sender === "operator") ? "ml-auto items-end" : "mr-auto items-start"}`}>
+                        {(m.sender_role === "operator" || m.sender === "operator") && (
                           <span className="text-[8px] font-bold text-red-400 mb-0.5">
-                            {m.operator_name || "Dispatcher Sarah M."} {m.operator_badge ? `(${m.operator_badge})` : ""}
+                            {m.sender || m.operator_name || "TEST Dispatcher"} {m.operator_badge ? `(${m.operator_badge})` : ""}
                           </span>
                         )}
-                        <div className={`p-3 rounded-2xl text-[12px] leading-relaxed shadow-sm ${m.is_deleted ? "bg-neutral-900 border border-neutral-800 text-neutral-500 italic" : m.sender === "operator" ? "bg-red-600 text-white rounded-br-none" : "bg-neutral-800 text-neutral-200 rounded-bl-none"}`}>
+                        <div className={`p-3 rounded-2xl text-[12px] leading-relaxed shadow-sm ${m.is_deleted ? "bg-neutral-900 border border-neutral-800 text-neutral-500 italic" : (m.sender_role === "operator" || m.sender === "operator") ? "bg-red-600 text-white rounded-br-none" : "bg-neutral-800 text-neutral-200 rounded-bl-none"}`}>
                           {m.is_deleted ? (
                             <span className="flex items-center gap-1.5"><Ban size={12} /> This message was deleted</span>
                           ) : (
@@ -723,13 +848,20 @@ export default function SentinelShell({
                                   )}
                                 </div>
                               )}
-                              {m.text && <p className="break-words">{m.text}</p>}
+                              {(m.content || m.text) && <p className="break-words">{m.content || m.text}</p>}
                             </>
                           )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-1">
-                          <span className="text-[9px] text-neutral-500">{m.time || 'Just now'}</span>
-                          {!m.is_deleted && (
+                          <span className="text-[9px] text-neutral-500">
+                            {m.created_at ? new Date(m.created_at).toLocaleString() : m.time || "Just now"}
+                            {isLocalTestApi && m.sender_role === "citizen"
+                              ? ` · ${m.read_state === "read" ? "Read by dispatcher" : "Received by dispatcher"}`
+                              : isLocalTestApi && m.sender_role === "operator"
+                                ? ` · ${m.read_state === "read" ? "Read by app" : m.delivery_state === "fetched_by_citizen_app" ? "Received by app" : "Waiting for app"}`
+                                : ""}
+                          </span>
+                          {!isLocalTestApi && !m.is_deleted && (
                             <button onClick={() => handleDeleteFromModal(m.id)} title="Delete Message" className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-red-400 transition-opacity p-0.5">
                               <Trash2 size={11} />
                             </button>
@@ -741,7 +873,7 @@ export default function SentinelShell({
                 </div>
 
                 {/* Optional Media URL input */}
-                {showMediaPrompt && (
+                {!isLocalTestApi && showMediaPrompt && (
                   <div className="px-3 py-2 bg-[#141414] border-t border-neutral-800 flex items-center gap-2">
                     <input
                       value={mediaUrlInput}
@@ -755,14 +887,16 @@ export default function SentinelShell({
 
                 {/* Input Form */}
                 <form onSubmit={handleSendFromModal} className="p-3 border-t border-neutral-800 bg-[#121212] flex gap-2 items-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowMediaPrompt(!showMediaPrompt)}
-                    title="Attach Media URL"
-                    className={`p-2 rounded-xl border border-neutral-800 transition-colors ${showMediaPrompt ? 'bg-red-500/20 text-red-400' : 'bg-[#181818] text-neutral-400 hover:text-white'}`}
-                  >
-                    <ExternalLink size={14} />
-                  </button>
+                  {!isLocalTestApi && (
+                    <button
+                      type="button"
+                      onClick={() => setShowMediaPrompt(!showMediaPrompt)}
+                      title="Attach Media URL"
+                      className={`p-2 rounded-xl border border-neutral-800 transition-colors ${showMediaPrompt ? 'bg-red-500/20 text-red-400' : 'bg-[#181818] text-neutral-400 hover:text-white'}`}
+                    >
+                      <ExternalLink size={14} />
+                    </button>
+                  )}
                   <input
                     value={newMsgText}
                     onChange={e => setNewMsgText(e.target.value)}
@@ -772,11 +906,17 @@ export default function SentinelShell({
                         (e.target as HTMLInputElement).form?.requestSubmit();
                       }
                     }}
-                    placeholder="Type message to citizen... (Press Enter to send)"
+                    disabled={!selectedThreadId || isSendingMessage}
+                    maxLength={2000}
+                    placeholder={isLocalTestApi ? "Write a TEST reply…" : "Type message to citizen... (Press Enter to send)"}
                     className="flex-1 bg-[#181818] border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/50"
                   />
-                  <button type="submit" className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-red-900/30">
-                    <Send size={13} /> Send
+                  <button
+                    type="submit"
+                    disabled={!selectedThreadId || isSendingMessage || !newMsgText.trim()}
+                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-md shadow-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Send size={13} /> {isSendingMessage ? "Sending…" : "Send"}
                   </button>
                 </form>
               </div>
@@ -948,4 +1088,3 @@ export default function SentinelShell({
     </div>
   );
 }
-
