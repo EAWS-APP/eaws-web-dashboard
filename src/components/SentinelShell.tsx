@@ -19,6 +19,15 @@ const NAV_ITEMS = [
   { id: "settings",   label: "Settings",      icon: Settings,      href: "/admin?tab=settings" },
 ];
 
+const SUPER_ADMIN_NAV_ITEMS = [
+  { id: "map",         label: "Live Overwatch",   icon: Map,           href: "/super-admin?tab=map" },
+  { id: "incidents",   label: "All Incidents",    icon: AlertTriangle, href: "/super-admin?tab=incidents" },
+  { id: "departments", label: "Agency Admins",    icon: Users,         href: "/super-admin?tab=departments" },
+  { id: "analytics",   label: "Analytics",        icon: BarChart3,     href: "/super-admin?tab=analytics" },
+  { id: "audit font-mono", label: "Audit Logs",   icon: ShieldAlert,   href: "/super-admin?tab=audit" },
+  { id: "settings font-mono", label: "Settings",  icon: Settings,      href: "/super-admin?tab=settings" },
+];
+
 type AgencyFilter = "all" | "fire" | "police" | "disaster";
 
 export default function SentinelShell({
@@ -108,45 +117,65 @@ export default function SentinelShell({
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: "var(--sentinel-bg, #080808)" }}>
 
       {/* ═══════════════════  LEFT SIDEBAR  ═══════════════════ */}
-      <aside className="w-[158px] min-w-[158px] flex flex-col border-r border-neutral-900 bg-[#0c0c0c]">
+      <aside className="w-[220px] min-w-[220px] flex flex-col border-r border-neutral-900 bg-[#0c0c0c]">
 
         {/* Logo */}
         <div className="px-4 pt-4 pb-3 border-b border-neutral-900">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-red-600 rounded-md flex items-center justify-center shrink-0 critical-pulse">
-              <ShieldAlert size={15} className="text-white" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 bg-red-600 rounded-md flex items-center justify-center shrink-0 critical-pulse">
+              <ShieldAlert size={18} className="text-white" />
             </div>
             <div className="leading-tight">
-              <p className="text-[9.5px] font-black tracking-widest text-white uppercase">Central</p>
-              <p className="text-[9.5px] font-black tracking-widest text-white uppercase">Dispatch</p>
+              <p className="text-xs font-black tracking-widest text-white uppercase">Central</p>
+              <p className="text-xs font-black tracking-widest text-white uppercase">Dispatch</p>
             </div>
           </div>
-          <p className="text-[9px] text-neutral-600 mt-1.5 font-mono">Region-01 · Active</p>
-          <div className="mt-1.5 text-[8px] font-medium px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-500 inline-block">
+          <p className="text-xs text-neutral-400 mt-1.5 font-medium">Region-01 · Active</p>
+          <div className="mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded bg-neutral-900 text-neutral-400 inline-block">
             Sentinel Command · 2026 Interface
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-2 pt-2 overflow-y-auto">
-          <p className="text-[8px] font-bold tracking-[0.15em] text-neutral-600 px-2 pt-1 pb-1.5 uppercase">Navigation</p>
-          {NAV_ITEMS.map((item) => {
+        <nav className="flex-1 px-3 pt-3 overflow-y-auto space-y-1">
+          <p className="text-xs font-bold tracking-wider text-neutral-400 px-1 pt-1 pb-1 uppercase">
+            {pathname.startsWith("/super-admin") ? "Super Admin Governance" : "Navigation"}
+          </p>
+          {(pathname.startsWith("/super-admin") ? SUPER_ADMIN_NAV_ITEMS : NAV_ITEMS).map((item) => {
             const Icon = item.icon;
-            const active = isActive(item.href);
+            let targetHref = item.href;
+            if (!pathname.startsWith("/super-admin")) {
+              if (item.id === "analytics") {
+                const base = pathname.includes("/dashboard") ? "/dashboard" : "/admin";
+                targetHref = `${base}?tab=analytics`;
+              } else if (item.id === "settings") {
+                const base = pathname.includes("/dashboard") ? "/dashboard" : "/admin";
+                targetHref = `${base}?tab=settings`;
+              } else if (item.id === "map") {
+                targetHref = "/dashboard";
+              }
+            }
+
+            const currentSearch = typeof window !== "undefined" ? window.location.search : "";
+            const currentFull = pathname + currentSearch;
+            const active = pathname.startsWith("/super-admin")
+              ? (currentFull === targetHref || (targetHref === "/super-admin?tab=map" && (!currentSearch || currentSearch === "?tab=map")))
+              : (pathname === targetHref || currentFull === targetHref);
+
             return (
               <button
                 key={item.id}
-                onClick={() => router.push(item.href)}
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[11px] font-medium transition-all mb-0.5 relative ${
+                onClick={() => router.push(targetHref)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs md:text-sm font-semibold transition-all mb-0.5 relative ${
                   active
-                    ? "bg-red-600 text-white shadow-lg shadow-red-900/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-800/70"
+                    ? "bg-red-600 text-white shadow-lg shadow-red-900/30 font-bold"
+                    : "text-neutral-300 hover:text-white hover:bg-neutral-800/70"
                 }`}
               >
-                <Icon size={13} />
+                <Icon size={16} />
                 <span>{item.label}</span>
                 {item.id === "incidents" && liveIncidentCount !== null && liveIncidentCount > 0 && (
-                  <span className="ml-auto text-[8px] font-bold bg-red-600 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                  <span className="ml-auto text-xs font-bold bg-red-600 text-white rounded-full px-2 py-0.5 min-w-[20px] text-center">
                     {liveIncidentCount > 99 ? "99+" : liveIncidentCount}
                   </span>
                 )}
@@ -156,30 +185,30 @@ export default function SentinelShell({
         </nav>
 
         {/* Agency Filter */}
-        <div className="px-3 pb-4 pt-2 border-t border-neutral-900">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-[8px] font-bold tracking-[0.12em] text-neutral-600 uppercase">Agency Filter</p>
+        <div className="px-3 pb-4 pt-3 border-t border-neutral-900">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs font-bold tracking-wider text-neutral-400 uppercase">Agency Filter</p>
             <button
               onClick={() => setAgencyFilter("all")}
-              className={`text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors ${agencyFilter === "all" ? "bg-neutral-700 text-white" : "text-neutral-500 hover:text-white"}`}
+              className={`text-xs font-bold px-2 py-0.5 rounded transition-colors ${agencyFilter === "all" ? "bg-neutral-700 text-white" : "text-neutral-400 hover:text-white"}`}
             >
               All
             </button>
           </div>
-          <p className="text-[8px] text-neutral-700 mb-2">Unified view across services</p>
+          <p className="text-xs text-neutral-400 mb-2">Unified view across services</p>
           {agencyList.map((a) => (
             <button
               key={a.key}
               onClick={() => setAgencyFilter(agencyFilter === a.key ? "all" : a.key)}
-              className={`w-full flex items-center justify-between py-1.5 px-1.5 rounded transition-all group mb-0.5 ${
+              className={`w-full flex items-center justify-between py-2 px-2 rounded-md transition-all group mb-1 ${
                 agencyFilter === a.key ? "bg-neutral-800" : "hover:bg-neutral-900"
               }`}
             >
-              <div className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${a.dot}`} />
-                <span className="text-[10px] text-neutral-300 group-hover:text-white">{a.label}</span>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${a.dot}`} />
+                <span className="text-xs font-semibold text-neutral-200 group-hover:text-white">{a.label}</span>
               </div>
-              <span className={`text-[10px] font-bold font-mono ${a.color}`}>{a.count}</span>
+              <span className={`text-xs font-bold ${a.color}`}>{a.count}</span>
             </button>
           ))}
         </div>
@@ -189,43 +218,43 @@ export default function SentinelShell({
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
         {/* Top Header */}
-        <header className="h-[52px] min-h-[52px] flex items-center px-5 gap-4 border-b border-neutral-900 bg-[#0c0c0c]">
+        <header className="h-[60px] min-h-[60px] flex items-center px-6 gap-4 border-b border-neutral-900 bg-[#0c0c0c]">
           {/* Title */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-[14px] font-bold text-white truncate">{title}</h1>
-              <span className="shrink-0 text-[8px] font-bold bg-neutral-800 text-neutral-500 px-2 py-0.5 rounded tracking-widest uppercase">
+            <div className="flex items-center gap-3">
+              <h1 className="text-base md:text-lg font-extrabold text-white truncate">{title}</h1>
+              <span className="shrink-0 text-[10px] font-bold bg-neutral-800 text-neutral-400 px-2.5 py-1 rounded tracking-widest uppercase">
                 2026 Interface
               </span>
             </div>
             {subtitle && (
-              <p className="text-[10px] text-neutral-600 leading-none mt-0.5 truncate">{subtitle}</p>
+              <p className="text-xs text-neutral-400 font-medium leading-none mt-1 truncate">{subtitle}</p>
             )}
           </div>
 
           {/* Search */}
           <div className="relative hidden md:block">
-            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-600" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
             <input
               placeholder="Search resources or ID..."
-              className="bg-neutral-900 border border-neutral-800 rounded-md pl-7 pr-3 py-1.5 text-[11px] text-neutral-300 placeholder-neutral-700 w-44 focus:outline-none focus:border-neutral-600 transition-colors"
+              className="bg-neutral-900 border border-neutral-800 rounded-md pl-9 pr-3 py-2 text-xs md:text-sm text-neutral-200 placeholder-neutral-500 w-52 focus:outline-none focus:border-neutral-600 transition-colors"
             />
           </div>
 
           {/* Region / Status badge */}
-          <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 rounded-md px-2.5 py-1.5">
+          <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 rounded-md px-3 py-2">
             {isOnline
-              ? <Wifi size={11} className="text-green-500" />
-              : <WifiOff size={11} className="text-red-500" />}
-            <span className="text-[11px] text-neutral-300 font-medium">Accra · {isOnline ? "Live" : "Offline"}</span>
+              ? <Wifi size={14} className="text-green-500" />
+              : <WifiOff size={14} className="text-red-500" />}
+            <span className="text-xs font-semibold text-neutral-200">Accra · {isOnline ? "Live" : "Offline"}</span>
           </div>
 
           {/* Broadcast Alert button */}
           <button
             onClick={() => setShowBroadcast(true)}
-            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-md transition-colors shadow-lg shadow-red-900/30"
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm font-bold px-4 py-2 rounded-md transition-colors shadow-lg shadow-red-900/30"
           >
-            <Radio size={11} className="animate-pulse" />
+            <Radio size={14} className="animate-pulse" />
             Broadcast Alert
           </button>
         </header>

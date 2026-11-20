@@ -252,7 +252,7 @@ export default function CommunityFeed({ userRole = "operator", userProfile = nul
     const matchesSearch = 
       inc.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
       (inc.description ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inc.location_name.toLowerCase().includes(searchQuery.toLowerCase());
+      (inc.location_name ?? "").toLowerCase().includes(searchQuery.toLowerCase());
       
     if (selectedCategory === "All") return matchesSearch;
     return matchesSearch && inc.category.toLowerCase() === selectedCategory.toLowerCase();

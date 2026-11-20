@@ -361,13 +361,15 @@ function CommunityMap({posts,focusPost,onProfileOpen}:{posts:Post[];focusPost:Po
   const [placeQ,setPlaceQ]=useState("");
   const [suggestions,setSuggestions]=useState<any[]>([]);
 
-  useEffect(()=>{
-    if((window as any).google){setLoaded(true);return;}
-    const s=document.createElement("script");
-    s.src=`https://maps.googleapis.com/maps/api/js?key=AIzaSyBsWnNq9bnzB8UATSXH0Hxiv6rDbQirD-Y&libraries=places`;
-    s.async=true;s.onload=()=>setLoaded(true);
-    document.head.appendChild(s);
-  },[]);
+  useEffect(() => {
+    let isMounted = true;
+    import("@/lib/googleMapsLoader").then(({ loadGoogleMaps }) => {
+      loadGoogleMaps().then(() => {
+        if (isMounted) setLoaded(true);
+      });
+    });
+    return () => { isMounted = false; };
+  }, []);
 
   useEffect(()=>{
     if(!loaded||!mapRef.current)return;

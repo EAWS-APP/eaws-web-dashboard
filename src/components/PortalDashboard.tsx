@@ -19,6 +19,9 @@ const LiveMap = dynamic(() => import("@/components/Map"), {
   ),
 });
 
+import { CadKanbanBoard } from "@/components/dashboard/CadKanbanBoard";
+import AgencyIncidentQueue from "@/components/masters-features/AgencyIncidentQueue";
+
 type Tone = "blue" | "orange" | "purple" | "red" | "emerald";
 
 type Stat = {
@@ -109,7 +112,7 @@ export default function PortalDashboard({
 
   // Sidebar Navigation tab state
   const [activeSidebarTab, setActiveSidebarTab] = useState<
-    "map" | "incidents" | "resources" | "community" | "analytics" | "status" | "support" | "clinical"
+    "map" | "incidents" | "resources" | "community" | "analytics" | "status" | "support" | "clinical" | "cad" | "live_queue"
   >("map");
 
   // Medical Registry Search states
@@ -191,6 +194,8 @@ export default function PortalDashboard({
     likedByMe?: boolean;
     reshares: number;
     resharedByMe?: boolean;
+    feedType?: "community" | "incident";
+    createdAt?: string;
     comments: Array<{
       id: string;
       author: string;
@@ -206,14 +211,25 @@ export default function PortalDashboard({
   }
 
   const [communityPosts, setCommunityPosts] = useState<CommunityPost[]>([]);
+  const [feedFilter, setFeedFilter] = useState<"all" | "community" | "incident">("all");
   const [isFeedLoading, setIsFeedLoading] = useState(false);
   const [postComments, setPostComments] = useState<Record<string, any[]>>({});
 
   const loadCommunityFeed = async () => {
     setIsFeedLoading(true);
     try {
-      const incidents = await eawsApi.getIncidentFeed();
-      const mappedPosts: CommunityPost[] = (incidents || []).map((inc) => {
+      const [incidents, citizenPosts] = await Promise.all([
+        eawsApi.getIncidentFeed().catch((e) => {
+          console.warn("Failed to fetch incident feed:", e);
+          return [];
+        }),
+        eawsApi.getCommunityPosts().catch((e) => {
+          console.warn("Failed to fetch citizen community posts:", e);
+          return [];
+        }),
+      ]);
+
+      const incidentMapped: CommunityPost[] = (incidents || []).map((inc: any) => {
         const firstMedia = inc.incident_media && inc.incident_media.length > 0 ? inc.incident_media[0] : null;
         const fullName = inc.reporter_profile?.full_name || (inc.is_anonymous ? "Anonymous Citizen" : "Citizen Reporter");
         const role = inc.reporter_profile?.user_role || "citizen";
@@ -233,7 +249,7 @@ export default function PortalDashboard({
         const relativeTime = minsAgo < 60 ? `${minsAgo}m ago` : `${Math.round(minsAgo / 60)}h ago`;
 
         return {
-          id: inc.id,
+          id: `inc-${inc.id}`,
           author: fullName,
           username: username,
           avatar: avatar,
@@ -243,6 +259,8 @@ export default function PortalDashboard({
           likedByMe: false,
           reshares: inc.views_count ?? 0,
           resharedByMe: false,
+          feedType: "incident",
+          createdAt: inc.created_at,
           comments: [],
           media: firstMedia ? {
             type: firstMedia.media_type,
@@ -250,7 +268,49 @@ export default function PortalDashboard({
           } : undefined,
         };
       });
-      setCommunityPosts(mappedPosts);
+
+      const communityMapped: CommunityPost[] = (citizenPosts || []).map((cp: any) => {
+        const rawCreated = cp.created_at ? new Date(cp.created_at).getTime() : Date.now();
+        const minsAgo = Math.max(1, Math.round((Date.now() - rawCreated) / 60000));
+        const relativeTime = minsAgo < 60 ? `${minsAgo}m ago` : `${Math.round(minsAgo / 60)}h ago`;
+        const authorName = cp.author_name || "Citizen Reporter";
+        const username = authorName.toLowerCase().replace(/\s+/g, "");
+
+        return {
+          id: String(cp.id),
+          author: authorName,
+          username: username,
+          avatar: cp.author_initials || authorName.substring(0, 2).toUpperCase(),
+          time: relativeTime,
+          content: cp.content || "",
+          likes: cp.likes_count ?? 0,
+          likedByMe: false,
+          reshares: 0,
+          resharedByMe: false,
+          feedType: "community",
+          createdAt: cp.created_at,
+          comments: (cp.replies || []).map((r: any) => ({
+            id: String(r.id),
+            author: r.author_name || "Citizen",
+            username: (r.author_name || "citizen").toLowerCase().replace(/\s+/g, ""),
+            avatar: r.author_initials || "C",
+            time: "recently",
+            content: r.content || "",
+          })),
+          media: cp.image_url ? {
+            type: "image",
+            url: cp.image_url,
+          } : undefined,
+        };
+      });
+
+      const combined = [...incidentMapped, ...communityMapped].sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      setCommunityPosts(combined);
     } catch (err) {
       console.error("Failed to fetch community feed:", err);
     } finally {
@@ -878,24 +938,15 @@ export default function PortalDashboard({
                     </td>
                     <td className="p-4 text-neutral-400">{inc.time}</td>
                     <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <a
-                          href={`/citizen?id=${inc.incident_metadata?.user_id || inc.id}`}
-                          target="_blank"
-                          className="px-3 py-1 bg-neutral-800 text-white hover:bg-neutral-700 font-bold rounded text-[10px] uppercase transition-all flex items-center gap-1 border border-neutral-700 h-[26px]"
-                        >
-                          Profile
-                        </a>
-                        <button
-                          onClick={() => {
-                            if (onSelect) onSelect(inc.id);
-                            setActiveSidebarTab("map");
-                          }}
-                          className="px-3 py-1 bg-primary text-on-primary hover:opacity-90 font-bold rounded text-[10px] uppercase transition-all h-[26px]"
-                        >
-                          Track View
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => {
+                          if (onSelect) onSelect(inc.id);
+                          setActiveSidebarTab("map");
+                        }}
+                        className="px-3 py-1 bg-primary text-on-primary hover:opacity-90 font-bold rounded text-[10px] uppercase transition-all"
+                      >
+                        Track View
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -980,7 +1031,9 @@ export default function PortalDashboard({
   const renderCommunityTab = () => {
     const handleLikePost = async (postId: string) => {
       try {
-        await eawsApi.reactToIncident(postId, "like");
+        if (postId.startsWith("inc-")) {
+          await eawsApi.reactToIncident(postId.replace("inc-", ""), "like");
+        }
         setCommunityPosts(prev => prev.map(post => {
           if (post.id === postId) {
             const liked = !post.likedByMe;
@@ -1016,26 +1069,42 @@ export default function PortalDashboard({
       if (!newPostText.trim() && !attachedMedia) return;
 
       try {
-        const defaultCategory = userRole === "police" ? "CRIME" : userRole === "fire" ? "FIRE" : "MEDICAL";
-        const titleText = newPostText.trim().substring(0, 50) + (newPostText.trim().length > 50 ? "..." : "");
+        const authorTitle = userRole === "police" 
+          ? "Ghana Police Service" 
+          : userRole === "fire" 
+          ? "Ghana National Fire Service" 
+          : userRole === "ambulance" 
+          ? "National Ambulance Service" 
+          : "Emergency Operations Command";
 
-        const res = await eawsApi.createIncident({
-          category: defaultCategory,
-          title: titleText,
-          description: newPostText.trim(),
-          location_name: "Greater Accra Command",
-          latitude: 5.6037,
-          longitude: -0.1870,
-          severity: "MEDIUM",
-        });
+        if (feedFilter === "incident") {
+          const defaultCategory = userRole === "police" ? "CRIME" : userRole === "fire" ? "FIRE" : "MEDICAL";
+          const titleText = newPostText.trim().substring(0, 50) + (newPostText.trim().length > 50 ? "..." : "");
 
-        const createdIncidentId = res.incident?.id;
+          const res = await eawsApi.createIncident({
+            category: defaultCategory,
+            title: titleText,
+            description: newPostText.trim(),
+            location_name: "Greater Accra Command",
+            latitude: 5.6037,
+            longitude: -0.1870,
+            severity: "MEDIUM",
+          });
 
-        if (createdIncidentId && attachedMedia) {
-          await eawsApi.attachMedia(createdIncidentId, {
-            media_type: attachedMedia.type,
-            file_url: attachedMedia.url,
-            description: `Media attachment for post ${createdIncidentId}`,
+          const createdIncidentId = res.incident?.id;
+          if (createdIncidentId && attachedMedia) {
+            await eawsApi.attachMedia(createdIncidentId, {
+              media_type: attachedMedia.type,
+              file_url: attachedMedia.url,
+              description: `Media attachment for post ${createdIncidentId}`,
+            });
+          }
+        } else {
+          await eawsApi.createCommunityPost({
+            content: newPostText.trim(),
+            image_url: attachedMedia?.type === "image" ? attachedMedia.url : undefined,
+            post_type: "alert",
+            author_name: authorTitle,
           });
         }
 
@@ -1052,22 +1121,52 @@ export default function PortalDashboard({
       if (!text.trim()) return;
 
       try {
-        const comment = await eawsApi.addComment(postId, text.trim());
-        setPostComments(prev => ({
-          ...prev,
-          [postId]: [...(prev[postId] || []), {
+        const authorTitle = userProfile?.full_name || (userRole === "police" ? "Ghana Police HQ" : "Emergency Operations Command");
+        let newCommentObj: any;
+
+        if (postId.startsWith("inc-")) {
+          const rawId = postId.replace("inc-", "");
+          const comment = await eawsApi.addComment(rawId, text.trim());
+          newCommentObj = {
             ...comment,
             user_profile: {
-              full_name: userProfile?.full_name || (userRole === "police" ? "Accra Police HQ" : "Accra Medical Staging"),
+              full_name: authorTitle,
               user_role: userRole,
               operator_code: userProfile?.operator_code || ""
             }
-          }]
+          };
+        } else {
+          const reply = await eawsApi.replyCommunityPost(postId, text.trim(), authorTitle);
+          newCommentObj = {
+            id: reply?.id || Date.now().toString(),
+            content: text.trim(),
+            created_at: new Date().toISOString(),
+            user_profile: {
+              full_name: authorTitle,
+              user_role: userRole,
+              operator_code: userProfile?.operator_code || ""
+            }
+          };
+        }
+
+        setPostComments(prev => ({
+          ...prev,
+          [postId]: [...(prev[postId] || []), newCommentObj]
         }));
 
         setCommunityPosts(prev => prev.map(post => {
           if (post.id === postId) {
-            return { ...post };
+            return {
+              ...post,
+              comments: [...post.comments, {
+                id: newCommentObj.id || Date.now().toString(),
+                author: authorTitle,
+                username: (userProfile?.operator_code || authorTitle).toLowerCase().replace(/\s+/g, ""),
+                avatar: authorTitle.substring(0, 2).toUpperCase(),
+                time: "just now",
+                content: text.trim(),
+              }],
+            };
           }
           return post;
         }));
@@ -1078,42 +1177,77 @@ export default function PortalDashboard({
       }
     };
 
+    const filteredPosts = communityPosts.filter((p) => {
+      if (feedFilter === "all") return true;
+      return p.feedType === feedFilter;
+    });
+
+    const citizenCount = communityPosts.filter(p => p.feedType === "community").length;
+    const cadCount = communityPosts.filter(p => p.feedType === "incident").length;
+
     return (
       <div className="space-y-4 font-mono text-xs max-w-2xl mx-auto pb-8">
-        {/* Feed Header */}
-        <div className="bg-[#111112] p-4 rounded-xl border border-outline-variant flex items-center justify-between">
+        {/* Feed Header with Intel Tabs */}
+        <div className="bg-[#111112] p-4 rounded-xl border border-outline-variant flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-bold text-white uppercase flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-lg animate-pulse">forum</span>
-              Community Feed
+              Live Feed & Community Intel
             </h3>
-            <p className="text-[10px] text-neutral-400 mt-0.5">X-STYLE INTEL SHARING PLATFORM</p>
+            <p className="text-[10px] text-neutral-400 mt-0.5">UNIFIED CITIZEN & EMERGENCY OPERATIONS FEED</p>
           </div>
-          <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded text-[8px] uppercase font-bold">
-            {communityPosts.length} ACTIVE DISCUSSION POSTS
-          </span>
-        </div>
-
-        {/* Citizen Search Widget */}
-        <div className="bg-surface-container p-3 rounded-xl border border-outline-variant flex items-center gap-3 mb-4">
-          <span className="material-symbols-outlined text-neutral-400 text-sm">search</span>
-          <input 
-            type="text" 
-            placeholder="Lookup Citizen Profile (e.g., GH-ACR-8829-44) - Press Enter" 
-            className="flex-1 bg-transparent border-none text-xs text-white placeholder-neutral-600 focus:outline-none font-sans"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.currentTarget.value) {
-                e.preventDefault();
-                window.open(`/citizen?id=${encodeURIComponent(e.currentTarget.value.trim())}`, '_blank');
-                e.currentTarget.value = '';
-              }
-            }}
-          />
-          <span className="text-[9px] text-neutral-500 bg-neutral-800 px-2 py-1 rounded font-bold">↵</span>
+          
+          {/* Segmented Filter Buttons */}
+          <div className="flex items-center gap-1 bg-neutral-900/90 p-1 rounded-lg border border-neutral-800">
+            <button
+              type="button"
+              onClick={() => setFeedFilter("all")}
+              className={`px-2.5 py-1 rounded text-[9px] font-bold uppercase transition-all ${
+                feedFilter === "all"
+                  ? "bg-primary text-on-primary shadow-sm"
+                  : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              All ({communityPosts.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFeedFilter("community")}
+              className={`px-2.5 py-1 rounded text-[9px] font-bold uppercase transition-all flex items-center gap-1 ${
+                feedFilter === "community"
+                  ? "bg-cyan-500 text-black shadow-sm"
+                  : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-300"></span>
+              Citizen ({citizenCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFeedFilter("incident")}
+              className={`px-2.5 py-1 rounded text-[9px] font-bold uppercase transition-all flex items-center gap-1 ${
+                feedFilter === "incident"
+                  ? "bg-amber-500 text-black shadow-sm"
+                  : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-300"></span>
+              CAD Reports ({cadCount})
+            </button>
+          </div>
         </div>
 
         {/* 1. Post Composer */}
         <form onSubmit={handleCreatePost} className="bg-surface-container p-4 rounded-xl border border-outline-variant space-y-3">
+          <div className="flex items-center justify-between border-b border-neutral-850/60 pb-2">
+            <span className="text-[9px] text-neutral-400 font-bold uppercase">
+              {feedFilter === "incident" ? "Broadcasting CAD Emergency Incident" : "Broadcasting to Citizen Community Feed"}
+            </span>
+            <span className="text-[8px] text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded font-bold uppercase">
+              Verified Authority Dispatch
+            </span>
+          </div>
+
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">
               {userRole === "police" ? "AP" : "AE"}
@@ -1122,7 +1256,9 @@ export default function PortalDashboard({
               <textarea
                 value={newPostText}
                 onChange={(e) => setNewPostText(e.target.value)}
-                placeholder="What is happening in your operational sector?"
+                placeholder={feedFilter === "incident" 
+                  ? "Describe emergency incident report for official CAD dispatch..." 
+                  : "What is happening in your operational sector? Inform citizens & command units..."}
                 className="w-full bg-neutral-950 border border-neutral-850 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-primary placeholder-neutral-600 font-sans resize-none"
                 rows={3}
               />
@@ -1193,157 +1329,187 @@ export default function PortalDashboard({
               disabled={!newPostText.trim() && !attachedMedia}
               className="bg-primary text-on-primary font-bold px-4 py-1.5 rounded uppercase text-[10px] transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:scale-100"
             >
-              Publish Post
+              {feedFilter === "incident" ? "Dispatch Incident" : "Publish to Feed"}
             </button>
           </div>
         </form>
 
         {/* 2. Posts Timeline */}
         <div className="space-y-4">
-          {communityPosts.map(post => (
-            <div key={post.id} className="bg-[#111112] border border-neutral-850 rounded-xl p-4 space-y-3">
-              {/* Post Header */}
-              <div className="flex items-center gap-3">
-                <a href={`/citizen?id=${post.username}`} target="_blank" className="w-8 h-8 rounded-full bg-neutral-800 text-white font-bold flex items-center justify-center shrink-0 hover:ring-2 hover:ring-primary transition-all cursor-pointer">
-                  {post.avatar}
-                </a>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <a href={`/citizen?id=${post.username}`} target="_blank" className="font-bold text-white text-xs leading-none hover:underline hover:text-primary transition-colors cursor-pointer">{post.author}</a>
-                    <a href={`/citizen?id=${post.username}`} target="_blank" className="text-[10px] text-neutral-500 font-sans hover:text-primary transition-colors cursor-pointer">@{post.username}</a>
+          {filteredPosts.length === 0 ? (
+            <div className="bg-[#111112] border border-neutral-850 rounded-xl p-8 text-center space-y-2">
+              <span className="material-symbols-outlined text-neutral-600 text-3xl">inbox</span>
+              <p className="text-neutral-400 text-xs">No posts found in this feed category.</p>
+              <p className="text-[10px] text-neutral-600">Switch tabs or publish a message to get started.</p>
+            </div>
+          ) : (
+            filteredPosts.map(post => (
+              <div key={post.id} className="bg-[#111112] border border-neutral-850 rounded-xl p-4 space-y-3">
+                {/* Post Header */}
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full ${post.feedType === "incident" ? "bg-amber-500/20 text-amber-400" : "bg-cyan-500/20 text-cyan-400"} font-bold flex items-center justify-center shrink-0`}>
+                    {post.avatar}
                   </div>
-                  <span className="text-[8px] text-neutral-500 mt-0.5 block">{post.time}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-white text-xs leading-none">{post.author}</span>
+                      <span className="text-[10px] text-neutral-500 font-sans">@{post.username}</span>
+                      {post.feedType === "incident" ? (
+                        <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          CAD EMERGENCY REPORT
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
+                          CITIZEN COMMUNITY FEED
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[8px] text-neutral-500 mt-0.5 block">{post.time}</span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Post Content */}
-              <p className="text-neutral-250 font-sans text-xs leading-relaxed break-words">{post.content}</p>
+                {/* Post Content */}
+                <p className="text-neutral-250 font-sans text-xs leading-relaxed break-words">{post.content}</p>
 
-              {/* Post Media Attachments */}
-              {post.media && (
-                <div className="border border-neutral-850 rounded-lg overflow-hidden bg-black max-w-full">
-                  {post.media.type === "image" && (
-                    <img 
-                      src={post.media.url} 
-                      alt="Post media attachment" 
-                      className="w-full h-auto max-h-72 object-cover"
-                    />
-                  )}
-                  {post.media.type === "video" && (
-                    <video 
-                      src={post.media.url} 
-                      className="w-full max-h-72" 
-                      controls 
-                    />
-                  )}
-                  {post.media.type === "audio" && (
-                    <div className="p-3 bg-neutral-900/60 flex flex-col gap-2">
-                      <span className="text-[8px] text-primary uppercase font-bold flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[10px]">audiotrack</span>
-                        Audio Broadcast Wave
-                      </span>
-                      <audio 
+                {/* Post Media Attachments */}
+                {post.media && (
+                  <div className="border border-neutral-850 rounded-lg overflow-hidden bg-black max-w-full">
+                    {post.media.type === "image" && (
+                      <img 
                         src={post.media.url} 
-                        className="w-full h-8" 
+                        alt="Post media attachment" 
+                        className="w-full h-auto max-h-72 object-cover"
+                      />
+                    )}
+                    {post.media.type === "video" && (
+                      <video 
+                        src={post.media.url} 
+                        className="w-full max-h-72" 
                         controls 
                       />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Post Actions Bar */}
-              <div className="flex items-center justify-start gap-8 pt-2 border-t border-neutral-850/60 text-neutral-400">
-                <button
-                  onClick={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
-                  className={`flex items-center gap-1.5 hover:text-white transition-colors ${
-                    activeCommentPostId === post.id ? "text-white" : ""
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-sm">chat_bubble</span>
-                  <span className="text-[10px] font-sans">{post.comments.length}</span>
-                </button>
-
-                <button
-                  onClick={() => handleResharePost(post.id)}
-                  className={`flex items-center gap-1.5 transition-colors ${
-                    post.resharedByMe ? "text-emerald-400 hover:text-emerald-355" : "hover:text-white"
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-sm">autorenew</span>
-                  <span className="text-[10px] font-sans">{post.reshares}</span>
-                </button>
-
-                <button
-                  onClick={() => handleLikePost(post.id)}
-                  className={`flex items-center gap-1.5 transition-colors ${
-                    post.likedByMe ? "text-red-500 hover:text-red-400" : "hover:text-white"
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: post.likedByMe ? "'FILL' 1" : undefined }}>
-                    favorite
-                  </span>
-                  <span className="text-[10px] font-sans">{post.likes}</span>
-                </button>
-              </div>
-
-              {/* Comments Section Drawer */}
-              {activeCommentPostId === post.id && (
-                <div className="pt-3 border-t border-neutral-850/60 space-y-3">
-                  {/* Comments list */}
-                  {(() => {
-                    const commentsForPost = postComments[post.id] || [];
-                    if (commentsForPost.length === 0) return (
-                      <div className="text-[10px] text-neutral-500 text-center py-2 bg-black/10 rounded-lg font-sans">
-                        Be the first to reply!
+                    )}
+                    {post.media.type === "audio" && (
+                      <div className="p-3 bg-neutral-900/60 flex flex-col gap-2">
+                        <span className="text-[8px] text-primary uppercase font-bold flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[10px]">audiotrack</span>
+                          Audio Broadcast Wave
+                        </span>
+                        <audio 
+                          src={post.media.url} 
+                          className="w-full h-8" 
+                          controls 
+                        />
                       </div>
-                    );
-                    return (
-                      <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1 bg-black/25 p-2 rounded-lg">
-                        {commentsForPost.map((c) => {
-                          const commenterName = c.user_profile?.full_name || "Official Operator";
-                          const commenterCode = c.user_profile?.operator_code || "";
-                          const commenterUser = commenterCode ? commenterCode : commenterName.toLowerCase().replace(/\s+/g, "");
-
-                          const minsAgo = Math.max(1, Math.round((Date.now() - new Date(c.created_at).getTime()) / 60000));
-                          const relativeTime = minsAgo < 60 ? `${minsAgo}m ago` : `${Math.round(minsAgo / 60)}h ago`;
-
-                          return (
-                            <div key={c.id} className="text-[10px] bg-neutral-900/40 p-2 rounded border border-neutral-850/50 space-y-1.5">
-                              <div className="flex justify-between items-center text-[8px] text-neutral-500 font-mono">
-                                <span className="font-bold text-neutral-300">@{commenterUser}</span>
-                                <span>{relativeTime}</span>
-                              </div>
-                              <p className="text-neutral-250 font-sans">{c.content}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Comment Composer */}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newCommentText[post.id] || ""}
-                      onChange={(e) => setNewCommentText(prev => ({ ...prev, [post.id]: e.target.value }))}
-                      placeholder="Post your reply..."
-                      className="flex-1 bg-neutral-950 border border-neutral-850 rounded px-2.5 py-1.5 text-[10px] text-white focus:outline-none focus:border-primary placeholder-neutral-600 font-sans"
-                    />
-
-                    <button
-                      onClick={() => handleAddComment(post.id)}
-                      disabled={!(newCommentText[post.id] || "").trim()}
-                      className="bg-primary text-on-primary font-bold px-3 rounded text-[9px] uppercase hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:scale-100 font-sans"
-                    >
-                      Reply
-                    </button>
+                    )}
                   </div>
+                )}
+
+                {/* Post Actions Bar */}
+                <div className="flex items-center justify-start gap-8 pt-2 border-t border-neutral-850/60 text-neutral-400">
+                  <button
+                    onClick={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
+                    className={`flex items-center gap-1.5 hover:text-white transition-colors ${
+                      activeCommentPostId === post.id ? "text-white" : ""
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">chat_bubble</span>
+                    <span className="text-[10px] font-sans">
+                      {(postComments[post.id]?.length || post.comments.length || 0)}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleResharePost(post.id)}
+                    className={`flex items-center gap-1.5 transition-colors ${
+                      post.resharedByMe ? "text-emerald-400 hover:text-emerald-355" : "hover:text-white"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">autorenew</span>
+                    <span className="text-[10px] font-sans">{post.reshares}</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLikePost(post.id)}
+                    className={`flex items-center gap-1.5 transition-colors ${
+                      post.likedByMe ? "text-red-500 hover:text-red-400" : "hover:text-white"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: post.likedByMe ? "'FILL' 1" : undefined }}>
+                      favorite
+                    </span>
+                    <span className="text-[10px] font-sans">{post.likes}</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {/* Comments Section Drawer */}
+                {activeCommentPostId === post.id && (
+                  <div className="pt-3 border-t border-neutral-850/60 space-y-3">
+                    {/* Comments list */}
+                    {(() => {
+                      const dynamicComments = postComments[post.id] || [];
+                      const initialComments = post.comments.map(c => ({
+                        id: c.id,
+                        content: c.content,
+                        created_at: new Date().toISOString(),
+                        user_profile: {
+                          full_name: c.author,
+                          operator_code: c.username,
+                        }
+                      }));
+                      const allDisplayComments = dynamicComments.length > 0 ? dynamicComments : initialComments;
+
+                      if (allDisplayComments.length === 0) return (
+                        <div className="text-[10px] text-neutral-500 text-center py-2 bg-black/10 rounded-lg font-sans">
+                          Be the first to reply!
+                        </div>
+                      );
+                      return (
+                        <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1 bg-black/25 p-2 rounded-lg">
+                          {allDisplayComments.map((c: any) => {
+                            const commenterName = c.user_profile?.full_name || "Official Operator";
+                            const commenterCode = c.user_profile?.operator_code || "";
+                            const commenterUser = commenterCode ? commenterCode : commenterName.toLowerCase().replace(/\s+/g, "");
+
+                            const minsAgo = Math.max(1, Math.round((Date.now() - new Date(c.created_at || Date.now()).getTime()) / 60000));
+                            const relativeTime = minsAgo < 60 ? `${minsAgo}m ago` : `${Math.round(minsAgo / 60)}h ago`;
+
+                            return (
+                              <div key={c.id} className="text-[10px] bg-neutral-900/40 p-2 rounded border border-neutral-850/50 space-y-1.5">
+                                <div className="flex justify-between items-center text-[8px] text-neutral-500 font-mono">
+                                  <span className="font-bold text-neutral-300">@{commenterUser}</span>
+                                  <span>{relativeTime}</span>
+                                </div>
+                                <p className="text-neutral-250 font-sans">{c.content}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Comment Composer */}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newCommentText[post.id] || ""}
+                        onChange={(e) => setNewCommentText(prev => ({ ...prev, [post.id]: e.target.value }))}
+                        placeholder={post.feedType === "incident" ? "Reply to CAD incident report..." : "Reply to citizen post..."}
+                        className="flex-1 bg-neutral-950 border border-neutral-850 rounded px-2.5 py-1.5 text-[10px] text-white focus:outline-none focus:border-primary placeholder-neutral-600 font-sans"
+                      />
+
+                      <button
+                        onClick={() => handleAddComment(post.id)}
+                        disabled={!(newCommentText[post.id] || "").trim()}
+                        className="bg-primary text-on-primary font-bold px-3 rounded text-[9px] uppercase hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:scale-100 font-sans"
+                      >
+                        Reply
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
     );
@@ -1679,69 +1845,91 @@ export default function PortalDashboard({
         <nav className="flex-1 px-2 space-y-1">
           <button 
             onClick={() => setActiveSidebarTab("map")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "map"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Live Map</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Live Map</span>
           </button>
           <button 
             onClick={() => setActiveSidebarTab("incidents")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "incidents"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined">emergency_home</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Incidents</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Incidents</span>
+          </button>
+          <button 
+            onClick={() => setActiveSidebarTab("cad")}
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
+              activeSidebarTab === "cad"
+                ? "bg-secondary-container text-on-secondary-container border-secondary"
+                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
+            }`}
+          >
+            <span className="material-symbols-outlined">view_kanban</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">CAD Kanban</span>
+          </button>
+          <button 
+            onClick={() => setActiveSidebarTab("live_queue")}
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
+              activeSidebarTab === "live_queue"
+                ? "bg-secondary-container text-on-secondary-container border-secondary"
+                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
+            }`}
+          >
+            <span className="material-symbols-outlined">dataset</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Dispatch Queue</span>
           </button>
           <button 
             onClick={() => setActiveSidebarTab("resources")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "resources"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined">group_work</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Resources</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Resources</span>
           </button>
           <button 
             onClick={() => setActiveSidebarTab("community")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "community"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined">rss_feed</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Community</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Community</span>
           </button>
           <button 
             onClick={() => setActiveSidebarTab("analytics")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "analytics"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined">monitoring</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Analytics</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Analytics</span>
           </button>
           <button 
             onClick={() => setActiveSidebarTab("clinical")}
-            className={`w-full flex items-center gap-4 px-4 py-2 transition-all text-left border-l-4 ${
+            className={`w-full flex items-center gap-4 px-4 py-2.5 transition-all text-left border-l-4 ${
               activeSidebarTab === "clinical"
                 ? "bg-secondary-container text-on-secondary-container border-secondary"
                 : "text-on-surface-variant hover:text-on-surface hover:bg-surface-variant border-transparent"
             }`}
           >
             <span className="material-symbols-outlined">local_hospital</span>
-            <span className="text-[11px] font-bold uppercase tracking-wider font-mono">Clinical Intake</span>
+            <span className="text-xs md:text-sm font-bold uppercase tracking-wider">Clinical Intake</span>
           </button>
         </nav>
         <div className="px-4 mt-auto space-y-4">
@@ -1827,7 +2015,40 @@ export default function PortalDashboard({
         {/* VIEW RENDERERS BASED ON THE OPERATIONAL ROLE                              */}
         {/* ========================================================================= */}
 
-        {activeSidebarTab === "map" ? (
+        {activeSidebarTab === "cad" ? (
+          <div className="flex-1 p-6 overflow-hidden bg-[#0A0A0A]">
+            <CadKanbanBoard
+              incidents={queue.map((q) => ({
+                id: q.incident_id || q.id,
+                title: q.title,
+                description: q.incident_description || q.location,
+                category: "EMERGENCY",
+                severity: q.priority === "HIGH" || q.priority === "CRITICAL" ? "CRITICAL" : "MEDIUM",
+                status: (q.status || "pending") as any,
+                latitude: q.latitude || 5.6037,
+                longitude: q.longitude || -0.1870,
+                location_name: q.location,
+                created_at: new Date().toISOString(),
+                priority: q.priority.toLowerCase(),
+                is_anonymous: false,
+                likes_count: 0,
+                comments_count: 0,
+              }))}
+              onUpdateStatus={async (id, status) => {
+                try {
+                  await eawsApi.updateIncident(id, { status: status as any });
+                  if (onRefresh) onRefresh();
+                } catch (e) {
+                  alert("Failed to update status");
+                }
+              }}
+            />
+          </div>
+        ) : activeSidebarTab === "live_queue" ? (
+          <div className="flex-1 p-6 overflow-y-auto bg-[#0A0A0A]">
+            <AgencyIncidentQueue agencyType={userRole === "police" ? "police" : userRole === "fire" ? "fire" : "ambulance"} />
+          </div>
+        ) : activeSidebarTab === "map" ? (
           <>
             {/* A. MEDICAL / AMBULANCE DASHBOARD PORTAL */}
             {userRole === "ambulance" && (
