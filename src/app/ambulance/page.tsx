@@ -1,4 +1,4 @@
-"use client";
+import AgencyIncidentQueue from "@/components/AgencyIncidentQueue";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -112,6 +112,7 @@ export default function AmbulanceDashboardPage() {
     );
   }
 
+export default function AmbulancePage() {
   return (
     <PortalDashboard
       tone="red"

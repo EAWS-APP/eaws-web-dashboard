@@ -9,6 +9,7 @@ import {
   X, CheckCircle, UserCheck, Search, Shield, Flame, Activity, Phone,
   Radio, Play, Send, AlertTriangle, Compass, Navigation, Plus, Minus, Layers
 } from "lucide-react";
+import { insforge } from "@/lib/insforge";
 
 const LiveMap = dynamic(() => import("@/components/Map"), {
   ssr: false,
@@ -465,27 +466,23 @@ export default function PortalDashboard({
 
   // Real-time incident logs channel subscriptions
   useEffect(() => {
-    const channel = supabase
-      .channel("radio-comms-logs")
-      .on(
-        "postgres_changes" as any,
-        { event: "INSERT", schema: "public", table: "incident_logs" },
-        (payload: any) => {
-          const newLog = payload.new;
-          setChatMessages((prev) => [
-            ...prev,
-            {
-              sender: newLog.operator_code || "FIELD_UNIT",
-              time: new Date(newLog.created_at).toTimeString().substring(0, 8),
-              text: newLog.remarks || newLog.status_logged || "Status logged",
-            },
-          ]);
-        }
-      )
-      .subscribe();
+    // InsForge Realtime: incident log messages
+    insforge.realtime.connect().then(() => {
+      insforge.realtime.subscribe("radio-comms-logs");
+      insforge.realtime.on<any>("incident_log_created", (payload) => {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            sender: payload.operator_code || "FIELD_UNIT",
+            time: new Date(payload.created_at).toTimeString().substring(0, 8),
+            text: payload.remarks || payload.status_logged || "Status logged",
+          },
+        ]);
+      });
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      insforge.realtime.unsubscribe("radio-comms-logs");
     };
   }, []);
 
@@ -765,7 +762,7 @@ export default function PortalDashboard({
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      const matched = (data || []).filter(inc => {
+      const matched = (data || []).filter((inc: any) => {
         const meta = inc.metadata || {};
         return meta.patient_name && meta.patient_name.toLowerCase() === name.toLowerCase();
       });
@@ -882,7 +879,7 @@ export default function PortalDashboard({
   };
 
   const renderIncidentsTab = () => {
-    const filteredInc = queue.filter(inc => {
+    const filteredInc = queue.filter((inc: any) => {
       const matchQuery = inc.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          inc.location.toLowerCase().includes(searchQuery.toLowerCase());
       return matchQuery;

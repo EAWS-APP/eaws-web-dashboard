@@ -1,4 +1,4 @@
-"use client";
+import AgencyIncidentQueue from "@/components/AgencyIncidentQueue";
 
 import PortalDashboard from "@/components/PortalDashboard";
 
