@@ -1,16 +1,16 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { Heart, MessageSquare, MapPin, Clock, Search, X, CheckCircle, User, AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, ExternalLink, Flame, Shield, Activity, Trash2, Ban, Send, PanelLeftClose, PanelRightClose, PanelLeftOpen, PanelRightOpen } from "lucide-react";
+import { Heart, MessageSquare, MapPin, Clock, Search, X, CheckCircle, User, AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, ExternalLink, Phone, Flame, Shield, Activity, Trash2, Ban } from "lucide-react";
 import SentinelShell from "@/components/SentinelShell";
-import { eawsApi, isLocalTestApi } from "@/lib/api";
+import { eawsApi } from "@/lib/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-interface Post { id:string; title:string; description:string; category:string; severity:string; location_name:string; latitude:number; longitude:number; created_at:string; is_verified:boolean; likes?:number; isLiked?:boolean; isAlarmed?:boolean; isConcerned?:boolean; alarmed?:number; concerned?:number; comments_count?:number; replies_count?:number; is_community?:boolean; incident_media?:{file_url:string;media_type:string}[]; reporter_profile?:{full_name:string;user_role:string;operator_code?:string}|null; reporter_id?:string; }
+interface Post { id:string; title:string; description:string; category:string; severity:string; location_name:string; latitude:number; longitude:number; created_at:string; is_verified:boolean; likes?:number; isLiked?:boolean; isAlarmed?:boolean; isConcerned?:boolean; alarmed?:number; concerned?:number; comments_count?:number; incident_media?:{file_url:string;media_type:string}[]; reporter_profile?:{full_name:string;user_role:string;operator_code?:string}|null; reporter_id?:string; }
 interface Citizen { user_id:string; full_name:string; phone:string; user_role:string; operator_code:string; is_approved:boolean; }
-interface Comment { id:string; user_id?:string; content:string; created_at:string; user_profile?:{full_name:string;user_role:string;operator_code?:string}|null; author_name?:string; author_initials?:string; threat_flag?:boolean; }
+interface Comment { id:string; user_id:string; content:string; created_at:string; user_profile?:{full_name:string;user_role:string;operator_code?:string}|null; }
 
-const SEV:Record<string,string> = { "CRITICAL":"text-red-400 bg-red-500/10 border-red-500/25", "WARNING":"text-orange-400 bg-orange-500/10 border-orange-500/25", "HIGH":"text-orange-400 bg-orange-500/10 border-orange-500/25", "MEDIUM":"text-yellow-400 bg-yellow-500/10 border-yellow-500/25", "LOW":"text-green-400 bg-green-500/10 border-green-500/25", "PENDING TRIAGE":"text-purple-400 bg-purple-500/10 border-purple-500/25", "COMMUNITY":"text-purple-400 bg-purple-500/10 border-purple-500/25" };
-const CATS = ["All","Updates","Fire","Flood","Medical","Police","Crime","Accident","Other"];
+const SEV:Record<string,string> = { CRITICAL:"text-red-400 bg-red-500/10 border-red-500/25", WARNING:"text-orange-400 bg-orange-500/10 border-orange-500/25", HIGH:"text-orange-400 bg-orange-500/10 border-orange-500/25", MEDIUM:"text-yellow-400 bg-yellow-500/10 border-yellow-500/25", LOW:"text-green-400 bg-green-500/10 border-green-500/25" };
+const CATS = ["All","Fire","Medical","Crime","Accident","Other"];
 const PHOTOS = ["https://images.unsplash.com/photo-1599733589046-9b8308b5b50d?w=600&auto=format&fit=crop","https://images.unsplash.com/photo-1582213782179-e0d53f98f2ca?w=600&auto=format&fit=crop","https://images.unsplash.com/photo-1610296669228-602fa827fc1f?w=600&auto=format&fit=crop","https://images.unsplash.com/photo-1590486803833-1c5dc8ddd4c8?w=600&auto=format&fit=crop","https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?w=600&auto=format&fit=crop"];
 const darkStyle = [{elementType:"geometry",stylers:[{color:"#18181a"}]},{elementType:"labels.icon",stylers:[{visibility:"off"}]},{elementType:"labels.text.fill",stylers:[{color:"#7b7b7f"}]},{elementType:"labels.text.stroke",stylers:[{color:"#18181a"}]},{featureType:"road",elementType:"geometry.fill",stylers:[{color:"#242426"}]},{featureType:"road",elementType:"labels.text.fill",stylers:[{color:"#8a8a8f"}]},{featureType:"water",elementType:"geometry",stylers:[{color:"#000000"}]}];
 
@@ -21,19 +21,9 @@ function photo(p:Post){const m=p.incident_media?.find(x=>x.media_type==="image")
 function PostCard({post,active,onClick}:{post:Post;active:boolean;onClick:()=>void}){
   const name=post.reporter_profile?.full_name||"Citizen Reporter";
   const initials=name.split(" ").map((w:string)=>w[0]).slice(0,2).join("").toUpperCase();
-  const isComm = post.category?.toLowerCase() === "community";
-  const mediaImage = post.incident_media?.find((item) => item.media_type === "image")?.file_url;
-  const imageUrl = mediaImage || (isLocalTestApi ? "" : photo(post));
-  const hasImage = Boolean(imageUrl);
   return(
-    <button onClick={onClick} className={`w-full text-left rounded-xl border transition-all overflow-hidden ${active?"border-purple-500/50 bg-[#141118]":"border-white/[0.06] bg-[#111111] hover:border-white/10"}`}>
-      {(!isComm || hasImage) && (
-        hasImage ? (
-          <img src={imageUrl} alt="" className="w-full h-28 object-cover" onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
-        ) : (
-          <div className="flex h-16 items-center justify-center bg-neutral-900 text-[10px] text-neutral-500">No media attached</div>
-        )
-      )}
+    <button onClick={onClick} className={`w-full text-left rounded-xl border transition-all overflow-hidden ${active?"border-red-500/40 bg-[#1a1212]":"border-white/[0.06] bg-[#111111] hover:border-white/10"}`}>
+      <img src={photo(post)} alt="" className="w-full h-28 object-cover" onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
       <div className="p-3">
         <div className="flex items-start justify-between gap-2 mb-1">
           <p className="text-white font-bold text-[12px] leading-snug line-clamp-2">{post.title}</p>
@@ -44,45 +34,44 @@ function PostCard({post,active,onClick}:{post:Post;active:boolean;onClick:()=>vo
           <span className="truncate">{name}</span>
         </div>
         <div className="flex items-center gap-3 text-[10px] text-neutral-600">
-          {post.location_name && (
-            <span className="flex items-center gap-1"><MapPin size={9}/><span className="truncate">{post.location_name}</span></span>
-          )}
+          <span className="flex items-center gap-1"><MapPin size={9}/><span className="truncate">{post.location_name}</span></span>
           <span className="ml-auto flex-shrink-0">{timeAgo(post.created_at)}</span>
         </div>
       </div>
-      {active&&<div className="px-3 pb-3"><div className="text-[10px] text-purple-400 font-bold flex items-center gap-1"><MapPin size={10}/> Pinned on map</div></div>}
+      {active&&<div className="px-3 pb-3"><div className="text-[10px] text-red-400 font-bold flex items-center gap-1"><MapPin size={10}/> Pinned on map</div></div>}
     </button>
   );
+}
+
+// ── Per-citizen mock medical/contacts data ──────────────────────────────────────
+const CITIZEN_DATA: Record<string, { blood_type: string; allergies: string; chronic_conditions: string; medications: string; emergency_contacts: { name: string; relation: string; phone: string }[] }> = {
+  "c-001": { blood_type: "O+", allergies: "Penicillin", chronic_conditions: "Asthma, Hypertension", medications: "Salbutamol", emergency_contacts: [{ name: "Ama Harrison", relation: "Spouse", phone: "+233 20 111 2233" }, { name: "Kwame Harrison", relation: "Brother", phone: "+233 24 555 7788" }] },
+  "c-002": { blood_type: "A+", allergies: "Sulfonamides", chronic_conditions: "Diabetes Type 2", medications: "Metformin", emergency_contacts: [{ name: "Kofi Boateng", relation: "Father", phone: "+233 20 111 2244" }, { name: "Yaa Boateng", relation: "Mother", phone: "+233 20 111 2255" }] },
+  "c-003": { blood_type: "B-", allergies: "None", chronic_conditions: "None", medications: "None", emergency_contacts: [{ name: "Ekow Asante", relation: "Uncle", phone: "+233 24 555 7799" }] },
+  "c-004": { blood_type: "O-", allergies: "Aspirin", chronic_conditions: "Epilepsy", medications: "Sodium Valproate", emergency_contacts: [{ name: "Adwoa Mensah", relation: "Sister", phone: "+233 50 909 1011" }] },
+  "c-005": { blood_type: "AB+", allergies: "Peanuts", chronic_conditions: "Asthma", medications: "Albuterol Inhaler", emergency_contacts: [{ name: "Yaw Osei-Bonsu", relation: "Husband", phone: "+233 27 456 8802" }] },
+};
+
+function resolveCitizenData(citizen: Citizen) {
+  // Direct key match
+  if (CITIZEN_DATA[citizen.user_id]) return CITIZEN_DATA[citizen.user_id];
+  // Match by name
+  const nameKey = Object.keys(CITIZEN_DATA).find(k => {
+    const names: Record<string, string> = { "c-001": "harrison", "c-002": "ama", "c-003": "kwame", "c-004": "nana", "c-005": "abena" };
+    return citizen.full_name.toLowerCase().includes(names[k] || "");
+  });
+  if (nameKey) return CITIZEN_DATA[nameKey];
+  // Fallback
+  return { blood_type: "Unknown", allergies: "Unknown", chronic_conditions: "Unknown", medications: "Unknown", emergency_contacts: [] };
 }
 
 // ── Inline Citizen Profile ─────────────────────────────────────────────────────
 function InlineProfile({citizen,onBack}:{citizen:Citizen;onBack:()=>void}){
   const initials=citizen.full_name.split(" ").map((w:string)=>w[0]).slice(0,2).join("").toUpperCase();
+  const med = resolveCitizenData(citizen);
   const [chatOpen, setChatOpen] = useState(false);
   const [msgs, setMsgs] = useState<{sender:string;text:string;time:string}[]>([]);
   const [newMsg, setNewMsg] = useState("");
-  const [mediaUrlInput, setMediaUrlInput] = useState("");
-  const [showMediaPrompt, setShowMediaPrompt] = useState(false);
-
-  useEffect(() => {
-    if (chatOpen) {
-      eawsApi.getMessages(citizen.user_id).then(res => setMsgs(res)).catch(e => console.error(e));
-      const interval = setInterval(() => {
-        eawsApi.getMessages(citizen.user_id).then(res => setMsgs(res)).catch(e => console.error(e));
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [chatOpen, citizen.user_id]);
-
-  const handleDeleteMsg = async (msgId: string) => {
-    try {
-      await eawsApi.deleteMessage(citizen.user_id, msgId);
-      const updated = await eawsApi.getMessages(citizen.user_id);
-      setMsgs(updated);
-    } catch(e) {
-      console.error(e);
-    }
-  };
 
   return(
     <div className="flex flex-col h-full">
@@ -98,90 +87,21 @@ function InlineProfile({citizen,onBack}:{citizen:Citizen;onBack:()=>void}){
             <button onClick={()=>setChatOpen(false)} className="p-1.5 rounded-lg bg-neutral-900 border border-white/[0.06] text-neutral-400 hover:text-white transition-colors"><ChevronLeft size={14}/></button>
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-700 to-neutral-900 border border-white/10 flex items-center justify-center font-bold text-[10px] text-white">{initials}</div>
-              <div><p className="text-white font-bold text-[12px]">{citizen.full_name}</p><p className="text-[9px] text-green-400 font-semibold">Online · Direct Line</p></div>
+              <div><p className="text-white font-bold text-[12px]">{citizen.full_name}</p><p className="text-[9px] text-green-400">Online</p></div>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2.5 flex flex-col">
             {msgs.length===0 && <div className="flex-1 flex items-center justify-center"><p className="text-neutral-600 text-[11px] text-center">No messages yet. Send a message to start communication.</p></div>}
-            {msgs.map((m:any,i)=>(
-              <div key={m.id || i} className={`group relative flex flex-col max-w-[85%] ${m.sender==="operator"?"ml-auto items-end":"mr-auto items-start"}`}>
-                <div className={`p-2.5 rounded-2xl text-[11px] leading-relaxed shadow-sm ${m.is_deleted ? "bg-neutral-900 border border-white/10 text-neutral-500 italic" : m.sender==="operator"?"bg-red-600 text-white rounded-br-none":"bg-neutral-800 text-neutral-200 rounded-bl-none"}`}>
-                  {m.is_deleted ? (
-                    <span className="flex items-center gap-1.5"><Ban size={12}/> This message was deleted</span>
-                  ) : (
-                    <>
-                      {m.media_url && (
-                        <div className="mb-2 rounded-lg overflow-hidden border border-white/10">
-                          {m.type === 'video' ? (
-                            <video src={m.media_url} controls className="max-h-48 w-full object-cover" />
-                          ) : (
-                            <img src={m.media_url} alt="" className="max-h-48 w-full object-cover" onError={(e)=>(e.target as HTMLElement).style.display='none'} />
-                          )}
-                        </div>
-                      )}
-                      {m.text && <p className="break-words">{m.text}</p>}
-                    </>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className="text-[8px] text-neutral-600">{m.time || 'Just now'}</span>
-                  {!m.is_deleted && (
-                    <button onClick={() => handleDeleteMsg(m.id)} title="Delete Message" className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-red-400 transition-opacity p-0.5">
-                      <Trash2 size={10} />
-                    </button>
-                  )}
-                </div>
+            {msgs.map((m,i)=>(
+              <div key={i} className={`flex flex-col max-w-[85%] ${m.sender==="operator"?"ml-auto items-end":"mr-auto items-start"}`}>
+                <div className={`p-2.5 rounded-2xl text-[11px] leading-relaxed ${m.sender==="operator"?"bg-red-600 text-white rounded-br-none":"bg-neutral-800 text-neutral-200 rounded-bl-none"}`}>{m.text}</div>
+                <span className="text-[8px] text-neutral-600 mt-0.5">{m.time}</span>
               </div>
             ))}
           </div>
-
-          {showMediaPrompt && (
-            <div className="px-3 py-2 bg-[#1a1a1a] border-t border-white/10 flex items-center gap-2">
-              <input
-                value={mediaUrlInput}
-                onChange={e=>setMediaUrlInput(e.target.value)}
-                placeholder="Paste Image/Video URL..."
-                className="flex-1 bg-[#111] border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none"
-              />
-              <button onClick={()=>setShowMediaPrompt(false)} className="text-neutral-400 hover:text-white"><X size={13}/></button>
-            </div>
-          )}
-
-          <form onSubmit={async e=>{
-            e.preventDefault();
-            const text = newMsg.trim();
-            const media = mediaUrlInput.trim();
-            if(!text && !media) return;
-            setNewMsg("");
-            setMediaUrlInput("");
-            setShowMediaPrompt(false);
-            try {
-              const type = media ? (media.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'image') : 'text';
-              await eawsApi.sendMessage(citizen.user_id, text, type, media || undefined);
-              const updated = await eawsApi.getMessages(citizen.user_id);
-              setMsgs(updated);
-            } catch(e){
-              console.error(e);
-            }
-          }} className="p-3 border-t border-white/[0.05] flex gap-2 items-center">
-            <button type="button" onClick={()=>setShowMediaPrompt(!showMediaPrompt)} title="Attach Media URL" className={`p-2 rounded-xl border border-white/10 transition-colors ${showMediaPrompt ? 'bg-red-500/20 text-red-400' : 'bg-[#181818] text-neutral-400 hover:text-white'}`}>
-              <ExternalLink size={13}/>
-            </button>
-            <input
-              value={newMsg}
-              onChange={e=>setNewMsg(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  (e.target as HTMLInputElement).form?.requestSubmit();
-                }
-              }}
-              placeholder="Type message to citizen... (Press Enter or click Send)"
-              className="flex-1 bg-[#181818] border border-white/[0.06] rounded-xl px-3 py-2 text-[11px] text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/50"
-            />
-            <button type="submit" className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-[11px] transition-colors flex items-center gap-1.5 shadow-md shadow-red-900/30">
-              <Send size={12}/> Send
-            </button>
+          <form onSubmit={e=>{e.preventDefault();if(!newMsg.trim())return;setMsgs(p=>[...p,{sender:"operator",text:newMsg,time:"Just now"}]);setNewMsg("");setTimeout(()=>{setMsgs(p=>[...p,{sender:"citizen",text:"Received. Standing by for instructions.",time:"Just now"}]);},1500);}} className="p-3 border-t border-white/[0.05] flex gap-2">
+            <input value={newMsg} onChange={e=>setNewMsg(e.target.value)} placeholder="Type message..." className="flex-1 bg-[#181818] border border-white/[0.06] rounded-xl px-3 py-2 text-[11px] text-white placeholder-neutral-600 focus:outline-none focus:border-red-500/50"/>
+            <button type="submit" className="p-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors"><MessageSquare size={13}/></button>
           </form>
         </div>
       ) : (
@@ -205,18 +125,29 @@ function InlineProfile({citizen,onBack}:{citizen:Citizen;onBack:()=>void}){
         {/* Medical */}
         <div className="bg-[#151515] border border-white/[0.06] rounded-xl p-4">
           <p className="text-[11px] font-bold text-neutral-300 mb-2">Medical Profile</p>
-          <p className="text-[10px] text-amber-300">
-            Masked. Authorized reveal and access auditing are not connected, so medical details are unavailable.
-          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {[["Blood Type",med.blood_type],["Allergies",med.allergies],["Conditions",med.chronic_conditions],["Medications",med.medications]].map(([l,v])=>(
+              <div key={l} className="bg-[#111111] rounded-lg p-2.5"><p className="text-[9px] font-bold tracking-widest text-neutral-600 uppercase mb-1">{l}</p><p className="text-[11px] font-semibold text-white">{v}</p></div>
+            ))}
+          </div>
         </div>
         {/* Emergency Contacts */}
         <div className="bg-[#151515] border border-white/[0.06] rounded-xl p-4">
           <p className="text-[11px] font-bold text-neutral-300 mb-2">Emergency Contacts</p>
-          <p className="text-neutral-500 text-[11px] italic py-2">Contact records are not available from the configured API.</p>
+          <div className="space-y-2">
+            {med.emergency_contacts.length === 0 ? (
+              <p className="text-neutral-600 text-[11px] italic py-2">No emergency contacts registered</p>
+            ) : med.emergency_contacts.map(c=>(
+              <div key={c.name} className="flex items-center justify-between bg-[#111111] rounded-lg p-2.5">
+                <div><p className="text-[12px] font-semibold text-white">{c.name}</p><p className="text-[10px] text-neutral-500">{c.relation}</p></div>
+                <a href={`tel:${c.phone}`} className="flex items-center gap-1 text-[11px] font-mono text-neutral-400 hover:text-white transition-colors"><Phone size={10}/>{c.phone}</a>
+              </div>
+            ))}
+          </div>
         </div>
         {/* Actions */}
         <div className="flex gap-2">
-          <button onClick={()=>setChatOpen(true)} disabled={isLocalTestApi} title={isLocalTestApi ? "Citizen messaging is unavailable in TEST mode" : undefined} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold transition-colors flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"><MessageSquare size={12}/>{isLocalTestApi ? "Messaging unavailable" : "Message"}</button>
+          <button onClick={()=>setChatOpen(true)} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold transition-colors flex items-center justify-center gap-1.5"><MessageSquare size={12}/>Message</button>
           <a href={`/citizen?id=${encodeURIComponent(citizen.user_id)}`} className="flex-1 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] font-bold transition-colors flex items-center justify-center gap-1.5 border border-white/[0.08]"><ExternalLink size={12}/>Full Profile</a>
         </div>
       </div>
@@ -236,34 +167,15 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
 
   const name=local.reporter_profile?.full_name||'Citizen Reporter';
   const initials=name.split(' ').map((w:string)=>w[0]).slice(0,2).join('').toUpperCase();
-  const handle='@' + name.toLowerCase().replace(/\s+/g, '_');
-  const isComm = local.category?.toLowerCase() === 'community' || (local as any).is_community;
-  
-  // Media source if present
-  const mediaItem = local.incident_media?.find(x => x.media_type === 'image');
-  const hasMedia = !!(mediaItem?.file_url);
-  const imgSrc = mediaItem?.file_url || ((() => {
-    const h = local.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    return PHOTOS[h % PHOTOS.length];
-  })());
-
+  const imgSrc=(()=>{const m=local.incident_media?.find(x=>x.media_type==='image');if(m?.file_url)return m.file_url;const h=local.id.split('').reduce((a,c)=>a+c.charCodeAt(0),0);return PHOTOS[h%PHOTOS.length];})();
   const isOperator = ['dispatcher', 'police', 'fire', 'ambulance', 'admin'].includes(userRole);
 
-  useEffect(() => {
-    setLocal({...post});
-  }, [post]);
-
   useEffect(()=>{
-    if (isComm) {
-      setComments((local as any).replies || []);
-      setLoadingComments(false);
-      return;
-    }
     let cancelled=false;
     setLoadingComments(true);
     eawsApi.getComments(local.id).then(data=>{if(!cancelled)setComments(data||[]);}).catch(()=>{}).finally(()=>{if(!cancelled)setLoadingComments(false);});
     return()=>{cancelled=true;};
-  },[local.id, (local as any).replies, isComm]);
+  },[local.id]);
 
   useEffect(()=>{commentsEndRef.current?.scrollIntoView({behavior:'smooth'});},[comments]);
 
@@ -281,37 +193,17 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
     if(!commentText.trim()||submitting)return;
     setSubmitting(true);
     try{
-      if (isComm) {
-        const reply = await eawsApi.addReply(local.id, commentText.trim());
-        const newReply = {
-          ...reply,
-          author_name: reply.author_name || 'Ghana Citizen',
-          author_initials: reply.author_initials || 'GC',
-          content: reply.content || commentText.trim(),
-          created_at: reply.created_at || new Date().toISOString()
-        };
-        setComments(prev=>[...prev, newReply]);
-        const updated = {
-          ...local,
-          comments_count: (local.comments_count ?? 0) + 1,
-          replies: [...((local as any).replies || []), newReply]
-        };
-        setLocal(updated);
-        onUpdate(updated);
-      } else {
-        const c=await eawsApi.addComment(local.id,commentText.trim());
-        setComments(prev=>[...prev,{...c,user_profile:c.user_profile||{full_name:'You',user_role:'operator'}}]);
-        const updated={...local,comments_count:(local.comments_count??0)+1};
-        setLocal(updated);onUpdate(updated);
-      }
+      const c=await eawsApi.addComment(local.id,commentText.trim());
+      setComments(prev=>[...prev,{...c,user_profile:c.user_profile||{full_name:'You',user_role:'operator'}}]);
+      const updated={...local,comments_count:(local.comments_count??0)+1};
+      setLocal(updated);onUpdate(updated);
       setCommentText('');
     }catch{}
     setSubmitting(false);
   }
 
   async function handleDelete(){
-    if(isLocalTestApi) return;
-    if(!window.confirm("Are you sure you want to delete/remove this post? It will be removed immediately.")) return;
+    if(!window.confirm("Are you sure you want to delete/remove this incident report? It will be removed immediately.")) return;
     try{
       await eawsApi.deleteIncident(local.id);
       onDeletePost(local.id);
@@ -322,7 +214,7 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
   }
 
   async function handleBlock(){
-    if(isLocalTestApi || !local.reporter_id) return;
+    if(!local.reporter_id) return;
     if(!window.confirm(`Are you sure you want to block ${name} from using the EAWS platform? This will suspend their profile and remove their reports.`)) return;
     try{
       await eawsApi.blockUser(local.reporter_id);
@@ -342,91 +234,55 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
   function timeAgoC(iso:string){const d=Math.floor((Date.now()-new Date(iso).getTime())/1000);if(d<60)return`${d}s ago`;if(d<3600)return`${Math.floor(d/60)}m ago`;if(d<86400)return`${Math.floor(d/3600)}h ago`;return new Date(iso).toLocaleDateString();}
 
   return(
-    <div className="relative z-10 w-full h-full flex flex-col bg-[#0d0d0d] animate-in slide-in-from-right duration-200">
-      
-      {/* Top Sticky Header */}
-        <div className="flex items-center gap-3 p-4 border-b border-white/[0.06] flex-shrink-0 bg-[#0d0d0d]">
-          <button onClick={onClose} className="p-2 rounded-xl bg-neutral-900 border border-white/[0.08] text-neutral-400 hover:text-white transition-colors">
-            <X size={15}/>
-          </button>
+    <div className="fixed inset-0 z-50 flex items-end justify-end" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"/>
+      <div className="relative z-10 w-full max-w-2xl h-full flex flex-col bg-[#0d0d0d] border-l border-white/[0.07] shadow-2xl animate-in slide-in-from-right duration-300">
+        {/* Header */}
+        <div className="flex items-center gap-3 p-4 border-b border-white/[0.06] flex-shrink-0">
+          <button onClick={onClose} className="p-2 rounded-xl bg-neutral-900 border border-white/[0.08] text-neutral-400 hover:text-white transition-colors"><X size={15}/></button>
           {isOperator && (
-            <button onClick={handleDelete} disabled={isLocalTestApi} className="p-2 rounded-xl bg-red-950/40 border border-red-500/20 text-red-400 hover:bg-red-950/60 hover:text-red-300 transition-colors flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50" title={isLocalTestApi ? "Post removal is not connected in TEST mode" : "Delete Post"}>
-              <Trash2 size={13}/> <span className="text-[11px] font-bold">{isLocalTestApi ? "Removal unavailable in TEST" : "Delete Post"}</span>
-            </button>
+            <button onClick={handleDelete} className="p-2 rounded-xl bg-red-950/40 border border-red-500/20 text-red-400 hover:bg-red-950/60 hover:text-red-300 transition-colors flex items-center gap-1.5" title="Delete Post"><Trash2 size={13}/> <span className="text-[11px] font-bold">Delete Post</span></button>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm truncate">{isComm ? 'Post Details' : local.title}</p>
-            <p className="text-[11px] text-neutral-500">{isComm ? 'Community Post' : 'Incident Report'} · {timeAgo(local.created_at)}</p>
+            <p className="text-white font-bold text-sm truncate">{local.title}</p>
+            <p className="text-[11px] text-neutral-500">Incident Report · {timeAgo(local.created_at)}</p>
           </div>
-          {!isComm && (
-            <span className={`text-[10px] font-bold border rounded-full px-2.5 py-1 flex-shrink-0 ${SEV[local.severity]||SEV.LOW}`}>{local.severity}</span>
-          )}
+          <span className={`text-[10px] font-bold border rounded-full px-2.5 py-1 flex-shrink-0 ${SEV[local.severity]||SEV.LOW}`}>{local.severity}</span>
         </div>
 
-        {/* Scrollable Detail Body */}
         <div className="flex-1 overflow-y-auto">
-          
-          {/* Author Row & Main Post Body */}
-          <div className="p-5 border-b border-white/[0.05] space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center font-bold text-purple-300 text-sm flex-shrink-0">
-                  {initials}
-                </div>
+          {/* Media */}
+          <div className="relative h-52 w-full bg-neutral-950 flex-shrink-0 overflow-hidden">
+            <img src={imgSrc} alt="" className="w-full h-full object-cover opacity-90" onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"/>
+            <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-neutral-700 to-neutral-900 border-2 border-white/20 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{initials}</div>
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-white text-base">{name}</span>
-                    {local.is_verified && (
-                      <CheckCircle size={15} className="text-emerald-400" />
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-bold text-[12px]">{name}</p>
+                    {isOperator && local.reporter_profile?.user_role !== 'dispatcher' && local.reporter_profile?.user_role !== 'operator' && local.reporter_id && (
+                      <button onClick={handleBlock} className="px-1.5 py-0.5 rounded bg-red-950/50 border border-red-500/20 text-red-400 hover:bg-red-950/80 hover:text-red-300 text-[9px] font-bold transition-colors flex items-center gap-0.5"><Ban size={8}/> Block</button>
                     )}
-                    {roleBadge(local.reporter_profile?.user_role)}
                   </div>
-                  <p className="text-xs text-neutral-500 mt-0.5">{handle}</p>
+                  <div className="flex items-center gap-1.5">{roleBadge(local.reporter_profile?.user_role)}{local.is_verified&&<span className="text-[9px] text-green-400 font-bold flex items-center gap-0.5"><CheckCircle size={9}/>Verified</span>}</div>
                 </div>
               </div>
-
-              {isOperator && local.reporter_profile?.user_role !== 'dispatcher' && local.reporter_profile?.user_role !== 'operator' && local.reporter_id && (
-                <button onClick={handleBlock} disabled={isLocalTestApi} title={isLocalTestApi ? "Account moderation is not connected in TEST mode" : undefined} className="px-2 py-1 rounded-lg bg-red-950/50 border border-red-500/20 text-red-400 hover:bg-red-950/80 hover:text-red-300 text-xs font-bold transition-colors flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50">
-                  <Ban size={10}/>{isLocalTestApi ? "Blocking unavailable in TEST" : "Block User"}
-                </button>
-              )}
+              <span className={`text-[9px] font-bold border rounded-lg px-2 py-1 ${local.category==='fire'?'text-orange-400 bg-orange-500/20 border-orange-500/30':local.category==='medical'?'text-blue-400 bg-blue-500/20 border-blue-500/30':'text-red-400 bg-red-500/20 border-red-500/30'}`}>{local.category.toUpperCase()}</span>
             </div>
+          </div>
 
-            {/* Post Title & Content Text */}
-            <div className="text-white text-sm leading-relaxed whitespace-pre-line font-normal space-y-2">
-              <p className="font-semibold text-white text-base">{local.title}</p>
-              {local.description && local.description !== local.title && (
-                <p className="text-neutral-300 text-sm leading-relaxed">{local.description}</p>
-              )}
-            </div>
+          {/* Location */}
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.05]">
+            <MapPin size={13} className="text-red-400 flex-shrink-0"/>
+            <p className="text-[12px] text-neutral-400">{local.location_name}</p>
+            <span className="ml-auto text-[11px] text-neutral-600">{timeAgo(local.created_at)}</span>
+          </div>
 
-            {/* Attached Media Image (if available) */}
-            {(hasMedia || (local as any).image_url) && (
-              <div className="relative rounded-xl overflow-hidden border border-white/[0.08] max-h-80 bg-neutral-950">
-                <img src={(local as any).image_url || imgSrc} alt="" className="w-full h-full object-cover" onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
-              </div>
-            )}
-
-            {/* Location Pin & Geo Coordinates */}
-            {local.location_name && (
-              <div className="bg-[#151515] border border-white/[0.06] rounded-xl p-3 space-y-2">
-                <div className="flex items-center gap-2 text-xs text-neutral-300 font-semibold">
-                  <MapPin size={14} className="text-red-400 flex-shrink-0" />
-                  <span>{local.location_name}</span>
-                </div>
-                {local.latitude !== 0 && local.longitude !== 0 && (
-                  <div className="text-[10px] font-mono text-neutral-500 pl-5">
-                    {local.latitude}° N, {local.longitude}° W
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Timestamp & Meta */}
-            <div className="text-xs text-neutral-500 border-t border-white/[0.05] pt-3 flex items-center justify-between">
-              <span>{timeAgo(local.created_at)} · {new Date(local.created_at).toLocaleDateString()}</span>
-              <span>{(local.likes ?? 0) * 3 + 12} Views</span>
-            </div>
+          {/* Description */}
+          <div className="px-5 py-4 border-b border-white/[0.05]">
+            <p className="text-[11px] font-bold tracking-wider text-neutral-600 uppercase mb-2">Description</p>
+            <p className="text-neutral-300 text-[13px] leading-relaxed">{local.description||'No further details provided.'}</p>
           </div>
 
           {/* Reactions */}
@@ -443,7 +299,7 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
             </div>
           </div>
 
-          {/* Comments Section */}
+          {/* Comments */}
           <div className="px-5 py-4">
             <p className="text-[11px] font-bold tracking-wider text-neutral-600 uppercase mb-3">Comments ({local.comments_count??comments.length})</p>
             {loadingComments?(
@@ -456,12 +312,12 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
             ):(
               <div className="space-y-3">
                 {comments.map(c=>{
-                  const cName = c.author_name || c.user_profile?.full_name || (c as any).user_name || 'Ghana Citizen';
-                  const cInit = c.author_initials || (cName ? cName.split(' ').map((w:string)=>w[0]).slice(0,2).join('').toUpperCase() : 'GC');
+                  const cName=c.user_profile?.full_name||'Anonymous';
+                  const cInit=cName.split(' ').map((w:string)=>w[0]).slice(0,2).join('').toUpperCase();
                   return(
-                    <div key={c.id} className="bg-[#151515] border border-white/[0.06] rounded-xl p-3.5 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-[10px] font-bold text-purple-300 flex-shrink-0">{cInit}</div>
+                    <div key={c.id} className="bg-[#151515] border border-white/[0.06] rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-neutral-700 to-neutral-900 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">{cInit}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="text-white font-bold text-[12px]">{cName}</span>
@@ -470,14 +326,7 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
                         </div>
                         <span className="text-[10px] text-neutral-600 font-mono flex-shrink-0">{timeAgoC(c.created_at)}</span>
                       </div>
-                      <div className="pl-9">
-                        {c.threat_flag && (
-                          <span className="mb-1 inline-flex rounded border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[9px] font-bold text-red-300">
-                            Flagged for human review · threat language
-                          </span>
-                        )}
-                        <p className="text-neutral-300 text-[12px] leading-relaxed">{c.content}</p>
-                      </div>
+                      <p className="text-neutral-300 text-[12px] leading-relaxed pl-9">{c.content}</p>
                     </div>
                   );
                 })}
@@ -487,35 +336,30 @@ function PostDetailModal({post,onClose,onUpdate,userRole,onDeletePost,onBlockUse
           </div>
         </div>
 
-        {/* Comment Input Sticky Footer */}
+        {/* Comment Input */}
         <form onSubmit={submitComment} className="flex-shrink-0 p-4 border-t border-white/[0.07] bg-[#0d0d0d] flex gap-2">
-          <input value={commentText} onChange={e=>setCommentText(e.target.value)} placeholder="Post your reply..." disabled={submitting}
-            className="flex-1 bg-[#181818] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder-neutral-600 focus:outline-none focus:border-purple-500/40 transition-colors"/>
-          <button type="submit" disabled={submitting||!commentText.trim()} className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white font-bold text-[12px] transition-colors flex items-center gap-1.5 flex-shrink-0">
-            {submitting?<div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin"/>:<><MessageSquare size={13}/>Reply</>}
+          <input value={commentText} onChange={e=>setCommentText(e.target.value)} placeholder="Add a comment or update..." disabled={submitting}
+            className="flex-1 bg-[#181818] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder-neutral-600 focus:outline-none focus:border-red-500/40 transition-colors"/>
+          <button type="submit" disabled={submitting||!commentText.trim()} className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-[12px] transition-colors flex items-center gap-1.5 flex-shrink-0">
+            {submitting?<div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin"/>:<><MessageSquare size={13}/>Post</>}
           </button>
         </form>
+      </div>
     </div>
   );
 }
 
-// ── Community Map (Leaflet with Search, pin toggle, inline-profile callback) ─────
-function CommunityMap({
-  posts,
-  focusPost,
-  onProfileOpen,
-}: {
-  posts: Post[];
-  focusPost: Post | null;
-  onProfileOpen: (p: Post) => void;
-}) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInst = useRef<any>(null);
-  const LRef = useRef<any>(null);
-  const markersLayer = useRef<any>(null);
-  const [pinsVisible, setPinsVisible] = useState(true);
-  const [placeQ, setPlaceQ] = useState("");
-  const [suggestions, setSuggestions] = useState<any[]>([]);
+// ── Community Map (with Places search, pin toggle, inline-profile callback) ─────
+function CommunityMap({posts,focusPost,onProfileOpen}:{posts:Post[];focusPost:Post|null;onProfileOpen:(p:Post)=>void}){
+  const mapRef=useRef<HTMLDivElement>(null);
+  const searchRef=useRef<HTMLInputElement>(null);
+  const mapInst=useRef<any>(null);
+  const markers=useRef<any[]>([]);
+  const infoWin=useRef<any>(null);
+  const [loaded,setLoaded]=useState(false);
+  const [pinsVisible,setPinsVisible]=useState(true);
+  const [placeQ,setPlaceQ]=useState("");
+  const [suggestions,setSuggestions]=useState<any[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -527,167 +371,101 @@ function CommunityMap({
     return () => { isMounted = false; };
   }, []);
 
-  // Initialize Leaflet Map
-  useEffect(() => {
-    let isMounted = true;
-    async function init() {
-      if (typeof window === "undefined" || !mapRef.current) return;
-      const L = (await import("leaflet")).default;
-      if (!isMounted) return;
-      LRef.current = L;
+  useEffect(()=>{
+    if(!loaded||!mapRef.current)return;
+    const g=(window as any).google;
+    mapInst.current=new g.maps.Map(mapRef.current,{center:{lat:5.6037,lng:-0.1870},zoom:12,styles:darkStyle,disableDefaultUI:true});
+  },[loaded]);
 
-      if (!mapInst.current) {
-        const map = L.map(mapRef.current, {
-          center: [5.6037, -0.1870],
-          zoom: 12,
-          zoomControl: false,
-          attributionControl: false,
-        });
+  // Places autocomplete — use bounds (LatLngBounds) not Circle for AutocompleteService
+  useEffect(()=>{
+    if(!loaded||!placeQ.trim()){setSuggestions([]);return;}
+    const g=(window as any).google;
+    if(!g?.maps?.places)return;
+    const svc=new g.maps.places.AutocompleteService();
+    const t=setTimeout(()=>{
+      const ghanaBounds=new g.maps.LatLngBounds(
+        new g.maps.LatLng(4.5,- 3.5),
+        new g.maps.LatLng(11.5,1.5)
+      );
+      svc.getPlacePredictions({input:placeQ,bounds:ghanaBounds,types:['geocode','establishment']},(preds:any,status:any)=>{
+        if(status===g.maps.places.PlacesServiceStatus.OK&&preds){
+          setSuggestions(preds.slice(0,6).map((p:any)=>({name:p.structured_formatting?.main_text||p.description,sub:p.structured_formatting?.secondary_text||'',placeId:p.place_id})));
+        } else setSuggestions([]);
+      });
+    },350);
+    return()=>clearTimeout(t);
+  },[placeQ,loaded]);
 
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-          maxZoom: 19,
-          subdomains: "abcd",
-        }).addTo(map);
-
-        markersLayer.current = L.featureGroup().addTo(map);
-        mapInst.current = map;
+  function selectPlace(placeId:string,name:string){
+    const g=(window as any).google;
+    if(!g||!mapInst.current)return;
+    const svc=new g.maps.places.PlacesService(mapInst.current);
+    svc.getDetails({placeId},(place:any,status:any)=>{
+      if(status===g.maps.places.PlacesServiceStatus.OK&&place){
+        mapInst.current.panTo(place.geometry.location);
+        mapInst.current.setZoom(15);
+        setPlaceQ(name);setSuggestions([]);
       }
-    }
-    void init();
-    return () => {
-      isMounted = false;
-      if (mapInst.current) {
-        mapInst.current.remove();
-        mapInst.current = null;
-      }
-    };
-  }, []);
-
-  // Search autocompletion
-  useEffect(() => {
-    if (!placeQ.trim()) {
-      setSuggestions([]);
-      return;
-    }
-    const q = placeQ.toLowerCase();
-    const matches = ACCRA_PLACES.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.sub.toLowerCase().includes(q)
-    );
-    setSuggestions(matches);
-  }, [placeQ]);
-
-  function selectPlace(place: any) {
-    if (!mapInst.current) return;
-    mapInst.current.flyTo([place.lat, place.lng], 15, { duration: 1.2 });
-    setPlaceQ(place.name);
-    setSuggestions([]);
+    });
   }
 
-  // Render Pins
-  useEffect(() => {
-    const map = mapInst.current;
-    const L = LRef.current;
-    const layer = markersLayer.current;
-    if (!map || !L || !layer) return;
-
-    layer.clearLayers();
-    if (!pinsVisible) return;
-
-    posts.forEach((p) => {
-      if (!p.latitude || !p.longitude) return;
-      const isCrit = p.severity === "CRITICAL";
-      const color = isCrit ? "#ef4444" : "#f59e0b";
-
-      const html = `
-        <div class="relative flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
-          <span class="absolute w-7 h-7 rounded-full animate-ping opacity-60" style="background-color: ${color}40;"></span>
-          <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] shadow-lg border border-white font-bold text-white" style="background-color: ${color};">
-            ${isCrit ? "🚨" : "📢"}
-          </div>
-        </div>
-      `;
-
-      const customIcon = L.divIcon({
-        html,
-        className: "custom-community-pin",
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
-      });
-
-      const marker = L.marker([p.latitude, p.longitude], { icon: customIcon }).addTo(layer);
-
-      const popupHtml = `
-        <div class="p-3 text-zinc-100 bg-[#121215] rounded-xl border border-white/10 min-w-[200px] font-sans">
-          <div class="flex items-center justify-between gap-1 mb-1">
-            <span class="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase" style="background: ${color}20; color: ${color};">
-              ${p.severity}
-            </span>
-            <span class="text-[10px] text-zinc-400 font-mono">${p.location_name || "Accra"}</span>
-          </div>
-          <h4 class="text-xs font-bold text-white mb-1 leading-snug">${p.title}</h4>
-          <p class="text-[10px] text-zinc-400 mb-2 font-mono">${p.reporter_profile?.full_name || "Citizen Reporter"}</p>
-          <button
-            onclick="window.__communityOpenProfile&&window.__communityOpenProfile('${p.id}')"
-            class="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-center font-bold text-[10px] transition-colors"
-          >
-            View Citizen Signal
-          </button>
-        </div>
-      `;
-
-      marker.bindPopup(popupHtml, { className: "emergency-popup", closeButton: false });
+  // Draw / redraw markers
+  useEffect(()=>{
+    if(!mapInst.current||!loaded)return;
+    const g=(window as any).google;
+    markers.current.forEach(m=>m.marker?.setMap(null));
+    markers.current=[];
+    if(!pinsVisible)return;
+    posts.forEach(p=>{
+      if(!p.latitude||!p.longitude)return;
+      const isCrit=p.severity==="CRITICAL";
+      const m=new g.maps.Marker({position:{lat:p.latitude,lng:p.longitude},map:mapInst.current,title:p.title,icon:{path:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z",fillColor:isCrit?"#ef4444":"#f97316",fillOpacity:1,strokeColor:"#fff",strokeWeight:2,scale:1.4,anchor:new g.maps.Point(12,22)}});
+      // InfoWindow shows post info only — no external link
+      const iw=new g.maps.InfoWindow({content:`<div style="font-family:monospace;font-size:11px;color:#111;padding:6px;min-width:180px"><b style="color:#dc2626;display:block;margin-bottom:4px">${p.title}</b><span style="color:#555;font-size:10px">${p.location_name}</span><br/><span style="color:#777;font-size:10px">${p.reporter_profile?.full_name||'Citizen Reporter'}</span><br/><button onclick="window.__communityOpenProfile&&window.__communityOpenProfile('${p.id}')" style="display:block;width:100%;margin-top:8px;background:#dc2626;color:#fff;border:none;padding:5px 0;border-radius:4px;font-weight:bold;cursor:pointer;font-family:monospace;font-size:10px">View Profile</button></div>`});
+      m.addListener("click",()=>{if(infoWin.current)infoWin.current.close();iw.open(mapInst.current,m);infoWin.current=iw;});
+      markers.current.push({marker:m,post:p});
     });
-  }, [posts, pinsVisible]);
+  },[posts,loaded,pinsVisible]);
 
-  // Global callback for popups
-  useEffect(() => {
-    (window as any).__communityOpenProfile = (postId: string) => {
-      const found = posts.find((p) => p.id === postId);
-      if (found) onProfileOpen(found);
+  // Register global callback so InfoWindow button can open profile in right panel
+  useEffect(()=>{
+    (window as any).__communityOpenProfile=(postId:string)=>{
+      const found=posts.find(p=>p.id===postId);
+      if(found)onProfileOpen(found);
+      if(infoWin.current)infoWin.current.close();
     };
-    return () => {
-      delete (window as any).__communityOpenProfile;
-    };
-  }, [posts, onProfileOpen]);
+    return()=>{delete (window as any).__communityOpenProfile;};
+  },[posts,onProfileOpen]);
 
-  // Focus post pan
-  useEffect(() => {
-    if (!focusPost || !mapInst.current || !LRef.current) return;
-    const lat = focusPost.latitude || 5.6037;
-    const lng = focusPost.longitude || -0.1870;
-    mapInst.current.flyTo([lat, lng], 15, { duration: 1.2 });
-  }, [focusPost]);
+  // Pan to focused post
+  useEffect(()=>{
+    if(!focusPost||!mapInst.current||!loaded)return;
+    const g=(window as any).google;
+    mapInst.current.panTo({lat:focusPost.latitude,lng:focusPost.longitude});
+    mapInst.current.setZoom(15);
+    const entry=markers.current.find((e:any)=>e.post?.id===focusPost.id);
+    if(entry){if(infoWin.current)infoWin.current.close();const iw=new g.maps.InfoWindow({content:`<div style="font-family:monospace;font-size:11px;color:#111;padding:4px"><b style="color:#dc2626">${focusPost.title}</b><br/><span style="color:#555;font-size:10px">${focusPost.location_name}</span></div>`});iw.open(mapInst.current,entry.marker);infoWin.current=iw;}
+  },[focusPost,loaded]);
 
-  return (
-    <div className="w-full h-full relative select-none">
-      <div ref={mapRef} className="w-full h-full z-0" />
+  return(
+    <div className="w-full h-full relative">
+      <div ref={mapRef} className="w-full h-full"/>
+      {!loaded&&<div className="absolute inset-0 flex items-center justify-center bg-[#111]"><p className="text-neutral-500 text-sm">Loading map...</p></div>}
 
-      {/* Search overlay */}
-      <div className="absolute top-3 left-3 z-10 w-72">
-        <div className="apple-glass rounded-xl p-1 flex items-center gap-2 shadow-2xl">
-          <Search size={13} className="text-zinc-400 ml-2 pointer-events-none" />
-          <input
-            value={placeQ}
-            onChange={(e) => setPlaceQ(e.target.value)}
-            placeholder="Search Accra areas, towns, landmarks..."
-            className="w-full bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none py-1 font-medium"
-          />
-          {placeQ && (
-            <button onClick={() => { setPlaceQ(""); setSuggestions([]); }} className="p-1 text-zinc-400 hover:text-white">
-              <X size={12} />
-            </button>
-          )}
+      {/* Places search overlay */}
+      <div className="absolute top-3 left-3 z-10 w-64">
+        <div className="relative">
+          <Search size={13} className="absolute left-3 top-2.5 text-neutral-400 pointer-events-none"/>
+          <input ref={searchRef} value={placeQ} onChange={e=>setPlaceQ(e.target.value)} placeholder="Search areas, towns, cities..." className="w-full bg-[#111]/95 backdrop-blur border border-white/20 rounded-xl pl-8 pr-8 py-2 text-[12px] text-white placeholder-neutral-500 focus:outline-none focus:border-white/40"/>
+          {placeQ&&<button onClick={()=>{setPlaceQ('');setSuggestions([]);}} className="absolute right-2.5 top-2.5 text-neutral-500 hover:text-white"><X size={12}/></button>}
         </div>
-        {suggestions.length > 0 && (
-          <div className="apple-card mt-1.5 rounded-xl bg-[#121215]/95 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden divide-y divide-white/5 max-h-56 overflow-y-auto">
-            {suggestions.map((s: any) => (
-              <button
-                key={s.name}
-                onClick={() => selectPlace(s)}
-                className="w-full text-left p-2.5 hover:bg-white/[0.08] transition-colors"
-              >
-                <p className="text-white text-xs font-bold truncate">{s.name}</p>
-                <p className="text-zinc-400 text-[10px] truncate">{s.sub}</p>
+        {suggestions.length>0&&(
+          <div className="mt-1 bg-[#111]/97 border border-white/15 rounded-xl overflow-hidden shadow-2xl">
+            {suggestions.map((s:any)=>(
+              <button key={s.placeId} onClick={()=>selectPlace(s.placeId,s.name)} className="w-full text-left px-3 py-2 hover:bg-white/5 border-b border-white/[0.04] last:border-0 transition-colors">
+                <p className="text-white text-[12px] font-semibold">{s.name}</p>
+                <p className="text-neutral-500 text-[10px]">{s.sub}</p>
               </button>
             ))}
           </div>
@@ -695,18 +473,9 @@ function CommunityMap({
       </div>
 
       {/* Pin toggle button */}
-      <div className="absolute top-3 right-3 z-10">
-        <button
-          onClick={() => setPinsVisible(!pinsVisible)}
-          className={`apple-btn px-3 py-1.5 rounded-xl text-xs font-bold border transition-all shadow-md ${
-            pinsVisible
-              ? "bg-red-600 text-white border-red-500/50 shadow-[0_0_12px_rgba(239,68,68,0.35)]"
-              : "bg-black/60 text-zinc-400 border-white/10 hover:text-white"
-          }`}
-        >
-          {pinsVisible ? "Hide Signals" : "Show Signals"}
-        </button>
-      </div>
+      <button onClick={()=>setPinsVisible(v=>!v)} className={`absolute top-3 right-3 z-10 flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold transition-all backdrop-blur ${pinsVisible?'bg-[#111]/90 border-white/20 text-white hover:bg-[#1a1a1a]':'bg-neutral-900/90 border-white/10 text-neutral-500 hover:text-white'}`}>
+        <MapPin size={12}/> {pinsVisible?`${posts.filter(p=>p.latitude&&p.longitude).length} Pins`:'Pins Off'}
+      </button>
 
       {/* Focused post bottom card */}
       {focusPost&&(
@@ -724,142 +493,9 @@ function CommunityMap({
   );
 }
 
-const DEFAULT_MOCK_POSTS: Post[] = [
-  {
-    id: "inc-1",
-    title: "Rising water levels on Liberation Road",
-    description: "Water has reached knee level near the traffic light. Avoid the area and seek alternative bypass routes.",
-    category: "flood",
-    severity: "CRITICAL",
-    location_name: "Liberation Road, Accra",
-    latitude: 5.5560,
-    longitude: -0.1962,
-    created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-    is_verified: true,
-    likes: 24,
-    replies_count: 1,
-    reporter_profile: { full_name: "Kwame Asante", user_role: "citizen" },
-    reporter_id: "c-003"
-  },
-  {
-    id: "cp-001",
-    title: "Anyone else notice the traffic is really bad on the N1 highway this morning? Took me 45 minutes from Spintex to Accra Mall. Stay safe out there everyone 🙏",
-    description: "",
-    category: "community",
-    severity: "COMMUNITY",
-    location_name: "Accra, Ghana",
-    latitude: 5.6037,
-    longitude: -0.1870,
-    created_at: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
-    is_verified: true,
-    likes: 7,
-    replies_count: 2,
-    reporter_profile: { full_name: "D. Harrison", user_role: "citizen" },
-    reporter_id: "c-001",
-    is_community: true
-  },
-  {
-    id: "inc-2",
-    title: "Bushfire spotted near Achimota Forest",
-    description: "Thick smoke visible from the main road. Fire service has been called and dispatchers are en-route.",
-    category: "fire",
-    severity: "WARNING",
-    location_name: "Achimota Forest, Accra",
-    latitude: 5.6147,
-    longitude: -0.2105,
-    created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    is_verified: true,
-    likes: 12,
-    replies_count: 0,
-    reporter_profile: { full_name: "Ama Serwaa Boateng", user_role: "citizen" },
-    reporter_id: "c-002"
-  },
-  {
-    id: "cp-002",
-    title: "Heads up: The Electricity Company is doing maintenance work in East Legon areas 12 and 13 today from 9am to 4pm. Power will be out. Charge your devices now! ⚡",
-    description: "",
-    category: "community",
-    severity: "COMMUNITY",
-    location_name: "East Legon, Accra",
-    latitude: 5.6322,
-    longitude: -0.1654,
-    created_at: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
-    is_verified: true,
-    likes: 21,
-    replies_count: 1,
-    reporter_profile: { full_name: "Kwame Asante", user_role: "citizen" },
-    reporter_id: "c-003",
-    is_community: true
-  },
-  {
-    id: "INC-8829-X",
-    title: "Structure Fire - Makola Market",
-    description: "Large blaze reported in sector 3 of Makola Market. Multiple vendor structures involved.",
-    category: "fire",
-    severity: "CRITICAL",
-    location_name: "Makola Market, Accra",
-    latitude: 5.5458,
-    longitude: -0.2078,
-    created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    is_verified: true,
-    likes: 5,
-    replies_count: 2,
-    reporter_profile: { full_name: "D. Harrison", user_role: "citizen" },
-    reporter_id: "c-001"
-  },
-  {
-    id: "INC-1209-A",
-    title: "Armed Robbery - East Legon",
-    description: "Suspects fled in a black sedan after residential break-in. Police unit dispatched.",
-    category: "police",
-    severity: "HIGH",
-    location_name: "East Legon, Accra",
-    latitude: 5.6322,
-    longitude: -0.1654,
-    created_at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
-    is_verified: true,
-    likes: 12,
-    replies_count: 1,
-    reporter_profile: { full_name: "Abena Osei-Bonsu", user_role: "citizen" },
-    reporter_id: "c-005"
-  },
-  {
-    id: "inc-3",
-    title: "Injured person near Tema Station",
-    description: "Someone collapsed near the bus terminal. Ambulance has been contacted and is currently on the way.",
-    category: "medical",
-    severity: "MEDIUM",
-    location_name: "Tema Station, Accra",
-    latitude: 5.6844,
-    longitude: 0.0118,
-    created_at: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
-    is_verified: true,
-    likes: 6,
-    replies_count: 0,
-    reporter_profile: { full_name: "Nana Mensah", user_role: "citizen" },
-    reporter_id: "c-004"
-  },
-  {
-    id: "INC-7701-J",
-    title: "Suspicious Vehicle Activity - Osu RE",
-    description: "Unmarked vehicle lingering near commercial bank. Vehicle cleared by security team.",
-    category: "police",
-    severity: "MEDIUM",
-    location_name: "Osu RE, Accra",
-    latitude: 5.5560,
-    longitude: -0.1812,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 43).toISOString(),
-    is_verified: true,
-    likes: 3,
-    replies_count: 0,
-    reporter_profile: { full_name: "Jayden Spark", user_role: "citizen" },
-    reporter_id: "c-006"
-  }
-];
-
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function CommunityPage(){
-  const [posts,setPosts]=useState<Post[]>(isLocalTestApi ? [] : DEFAULT_MOCK_POSTS);
+  const [posts,setPosts]=useState<Post[]>([]);
   const [loading,setLoading]=useState(true);
   const [cat,setCat]=useState("All");
   const [feedQ,setFeedQ]=useState("");
@@ -893,59 +529,8 @@ export default function CommunityPage(){
   }
 
   async function load(){
-    try{
-      const [incidents, communityPosts] = await Promise.all([
-        eawsApi.getIncidentFeed(),
-        eawsApi.getCommunityPosts()
-      ]);
-
-      const mappedCommunity = (communityPosts || []).map((p: any) => ({
-        id: p.id,
-        title: p.content || '',
-        description: '',
-        category: 'community',
-        severity: 'COMMUNITY',
-        location_name: '', // Empty location by default for community posts
-        latitude: p.latitude || 0,
-        longitude: p.longitude || 0,
-        created_at: p.created_at,
-        is_verified: p.is_verified ?? true,
-        likes: p.likes_count ?? 0,
-        replies_count: p.replies_count ?? 0,
-        reporter_profile: {
-          full_name: p.author_name || 'Ghana Citizen',
-          user_role: 'citizen'
-        },
-        reporter_id: p.author_id,
-        is_community: true,
-        replies: p.replies || []
-      }));
-
-      // Combine and sort by date descending
-      const merged = [...(incidents || []), ...mappedCommunity];
-      merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      setPosts(prev=>{
-        const prevMap=new Map(prev.map(p=>[p.id,p]));
-        return merged.map((p:any)=>{
-          const old=prevMap.get(p.id);
-          return {
-            ...p,
-            likes:       p.likes ?? p.likes_count ?? 0,
-            alarmed:     p.alarmed_count ?? old?.alarmed  ?? 0,
-            concerned:   p.concerned_count ?? old?.concerned ?? 0,
-            isLiked:     old?.isLiked    ?? false,
-            isAlarmed:   old?.isAlarmed  ?? false,
-            isConcerned: old?.isConcerned ?? false,
-          };
-        });
-      });
-    }catch(e){
-      console.warn('EAWS community feed load failed:', e);
-      setPosts((prev) => isLocalTestApi ? [] : prev.length > 0 ? prev : DEFAULT_MOCK_POSTS);
-    }finally{
-      setLoading(false);
-    }
+    try{const d=await eawsApi.getIncidentFeed();setPosts((d||[]).map((p:any)=>({...p,likes:p.likes_count??Math.floor(Math.random()*30),isLiked:false})));}
+    catch{}setLoading(false);
   }
 
   useEffect(()=>{
@@ -954,7 +539,7 @@ export default function CommunityPage(){
       setUserRole(r.profile.user_role);
       setUserId(r.user.id);
     }).catch(()=>{});
-    const iv=setInterval(load,3000); // Poll every 3 seconds for real-time synchronization
+    const iv=setInterval(load,12000);
     return()=>clearInterval(iv);
   },[]);
 
@@ -968,37 +553,27 @@ export default function CommunityPage(){
   function like(id:string){setPosts(p=>p.map(x=>x.id===id?{...x,isLiked:!x.isLiked,likes:(x.likes??0)+(x.isLiked?-1:1)}:x));eawsApi.reactToIncident(id,"like").catch(()=>{});}
 
   const filtered=posts.filter(p=>{
-    const pCat = p.category?.toLowerCase() || '';
-    const mc = cat === "All" || 
-               (cat === "Updates" && pCat === "community") || 
-               (cat !== "Updates" && pCat === cat.toLowerCase());
+    const mc=cat==="All"||p.category.toLowerCase()===cat.toLowerCase();
     const mq=!feedQ||p.title.toLowerCase().includes(feedQ.toLowerCase())||p.description?.toLowerCase().includes(feedQ.toLowerCase());
     return mc&&mq;
   });
-
-  const [isLeftOpen, setIsLeftOpen] = useState(true);
-  const [isRightOpen, setIsRightOpen] = useState(true);
 
   return(<>
     <SentinelShell title="Community Intelligence" subtitle="Live citizen feed · Geographic mapping · Citizen lookup">
       <div className="h-full flex overflow-hidden" style={{background:"#0a0a0a"}}>
 
         {/* ── LEFT: Feed ── */}
-        <div
-          className="flex-shrink-0 flex flex-col border-r border-white/[0.05] transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
-          style={{ width: isLeftOpen ? "300px" : "0px", minWidth: isLeftOpen ? "300px" : "0px", opacity: isLeftOpen ? 1 : 0, overflow: isLeftOpen ? "visible" : "hidden" }}
-        >
-          <div className="flex-shrink-0 p-3.5 border-b border-white/[0.05] space-y-2 bg-[#0d0d0d]">
+        <div className="w-[300px] flex-shrink-0 flex flex-col border-r border-white/[0.05]">
+          <div className="flex-shrink-0 p-3 border-b border-white/[0.05] space-y-2 bg-[#0d0d0d]">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"/>
               <span className="text-white font-bold text-[12px]">Live Feed</span>
-              <span className="text-[10px] text-neutral-500 ml-auto">{posts.length} posts</span>
-              <button onClick={()=>{setLoading(true);load();}} title="Refresh Feed" className="p-1.5 rounded-lg bg-neutral-900 border border-white/[0.06] text-neutral-400 hover:text-white transition-colors"><RefreshCw size={11}/></button>
-              <button onClick={() => setIsLeftOpen(false)} title="Slide to Minimize Feed" className="p-1.5 rounded-lg bg-neutral-900 border border-white/[0.06] text-neutral-400 hover:text-white transition-colors flex items-center justify-center"><PanelLeftClose size={13}/></button>
+              <span className="text-[10px] text-neutral-600 ml-auto">{posts.length} posts</span>
+              <button onClick={()=>{setLoading(true);load();}} className="p-1.5 rounded-lg bg-neutral-900 border border-white/[0.06] text-neutral-400 hover:text-white"><RefreshCw size={11}/></button>
             </div>
             <div className="relative">
               <Search size={12} className="absolute left-2.5 top-2.5 text-neutral-500"/>
-              <input value={feedQ} onChange={e=>setFeedQ(e.target.value)} placeholder="Search posts..." className="w-full bg-[#181818] border border-white/[0.06] rounded-xl pl-7 pr-3 py-2 text-[12px] text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"/>
+              <input value={feedQ} onChange={e=>setFeedQ(e.target.value)} placeholder="Search posts..." className="w-full bg-[#181818] border border-white/[0.06] rounded-lg pl-7 pr-3 py-2 text-[12px] text-white placeholder-neutral-600 focus:outline-none focus:border-white/20"/>
             </div>
             <div className="flex gap-1.5 overflow-x-auto pb-0.5">
               {CATS.map(c=><button key={c} onClick={()=>setCat(c)} className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${cat===c?"bg-white text-black border-white":"text-neutral-500 border-white/[0.07] hover:text-white"}`}>{c}</button>)}
@@ -1007,7 +582,7 @@ export default function CommunityPage(){
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {loading?Array.from({length:4}).map((_,i)=><div key={i} className="h-48 rounded-xl bg-[#111] animate-pulse border border-white/[0.04]"/>):
               filtered.length===0?<div className="py-12 text-center text-neutral-600 text-[12px]">No posts match filters</div>:
-              filtered.map(p=><PostCard key={p.id} post={p} active={focusPost?.id===p.id} onClick={()=>{setFocusPost(focusPost?.id===p.id?null:p);setDetailPost(p);setIsRightOpen(true);}}/>)
+              filtered.map(p=><PostCard key={p.id} post={p} active={focusPost?.id===p.id} onClick={()=>{setFocusPost(focusPost?.id===p.id?null:p);setDetailPost(p);}}/>)
             }
           </div>
         </div>
@@ -1017,62 +592,22 @@ export default function CommunityPage(){
           <CommunityMap posts={filtered} focusPost={focusPost} onProfileOpen={(p)=>{
             // Convert post reporter to Citizen shape and open inline
             setProfile({user_id:p.reporter_id||p.id,full_name:p.reporter_profile?.full_name||'Citizen Reporter',phone:'',user_role:p.reporter_profile?.user_role||'citizen',operator_code:p.reporter_profile?.operator_code||p.id,is_approved:p.is_verified});
-            setIsRightOpen(true);
           }}/>
           {!focusPost&&(
             <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-[#111]/90 border border-white/10 rounded-xl px-4 py-2 backdrop-blur pointer-events-none">
               <p className="text-neutral-400 text-[11px] text-center">Click a post to pin · Click a pin to view profile</p>
             </div>
           )}
-          {/* Floating re-open buttons */}
-          {!isLeftOpen && (
-            <button
-              onClick={() => setIsLeftOpen(true)}
-              className="absolute left-4 bottom-8 z-[1000] flex items-center gap-2 bg-[#141414]/95 hover:bg-[#1c1c1e] border border-red-500/70 hover:border-red-500 text-white text-[12px] font-bold px-4 py-2.5 rounded-2xl transition-all shadow-[0_0_25px_rgba(239,68,68,0.3)] backdrop-blur-md"
-              title="Open Live Feed"
-            >
-              <PanelLeftOpen size={15} className="text-red-400" />
-              <span>Live Feed</span>
-              <span className="bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full min-w-[20px] text-center shadow">
-                {posts.length}
-              </span>
-            </button>
-          )}
-          {!isRightOpen && (
-            <button
-              onClick={() => setIsRightOpen(true)}
-              className="absolute right-4 bottom-8 z-[1000] flex items-center gap-2 bg-[#141414]/95 hover:bg-[#1c1c1e] border border-red-500/70 hover:border-red-500 text-white text-[12px] font-bold px-4 py-2.5 rounded-2xl transition-all shadow-[0_0_25px_rgba(239,68,68,0.3)] backdrop-blur-md"
-              title="Open Citizen Lookup"
-            >
-              <PanelRightOpen size={15} className="text-red-400" />
-              <span>Citizen Lookup</span>
-            </button>
-          )}
         </div>
 
-        {/* ── RIGHT: Citizen Search / Inline Profile / Inline Post Detail ── */}
-        <div
-          className="flex-shrink-0 flex flex-col border-l border-white/[0.05] bg-[#0d0d0d] relative transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
-          style={{ width: isRightOpen ? "380px" : "0px", minWidth: isRightOpen ? "380px" : "0px", opacity: isRightOpen ? 1 : 0, overflow: isRightOpen ? "hidden" : "hidden" }}
-        >
-          {detailPost ? (
-            <PostDetailModal
-              post={detailPost}
-              onClose={()=>setDetailPost(null)}
-              onUpdate={updatePost}
-              userRole={userRole}
-              onDeletePost={onDeletePost}
-              onBlockUser={onBlockUser}
-            />
-          ) : profile ? (
+        {/* ── RIGHT: Citizen Search / Inline Profile ── */}
+        <div className="w-[340px] flex-shrink-0 flex flex-col border-l border-white/[0.05] bg-[#0d0d0d]">
+          {profile?(
             <InlineProfile citizen={profile} onBack={()=>setProfile(null)}/>
-          ) : (
+          ):(
             <>
               <div className="flex-shrink-0 p-4 border-b border-white/[0.05]">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-white font-bold text-sm">Citizen Lookup</p>
-                  <button onClick={() => setIsRightOpen(false)} title="Slide to Minimize Panel" className="p-1.5 rounded-lg bg-neutral-900 border border-white/[0.06] text-neutral-400 hover:text-white transition-colors flex items-center justify-center"><PanelRightClose size={13}/></button>
-                </div>
+                <p className="text-white font-bold text-sm mb-0.5">Citizen Lookup</p>
                 <p className="text-[11px] text-neutral-500 mb-3">Search by name, phone or ID — click to view profile</p>
                 <div className="relative">
                   <Search size={13} className="absolute left-3 top-3 text-neutral-500"/>
@@ -1118,6 +653,16 @@ export default function CommunityPage(){
         </div>
       </div>
     </SentinelShell>
+    {detailPost&&(
+      <PostDetailModal
+        post={detailPost}
+        onClose={()=>setDetailPost(null)}
+        onUpdate={updatePost}
+        userRole={userRole}
+        onDeletePost={onDeletePost}
+        onBlockUser={onBlockUser}
+      />
+    )}
   </>
   );
 }
